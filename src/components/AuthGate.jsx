@@ -68,7 +68,8 @@ function AuthForm() {
     if (/email not confirmed/i.test(message)) return t('auth.notConfirmed')
     if (/password should be at least/i.test(message)) return t('auth.passwordShort', { n: MIN_PASSWORD })
     if (/rate limit/i.test(message)) return t('auth.rateLimited')
-    if (/signups not allowed|signup is disabled/i.test(message)) return t('auth.signupDisabled')
+    if (/logins are disabled|provider is not enabled|email provider/i.test(message)) return t('auth.emailDisabled')
+    if (/signups not allowed|signup is disabled|signups are disabled/i.test(message)) return t('auth.signupDisabled')
     return message || t('auth.failed')
   }
 
