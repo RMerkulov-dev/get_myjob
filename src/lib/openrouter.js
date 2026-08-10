@@ -88,7 +88,7 @@ export async function complete({ apiKey, model, messages, temperature = 0.2, jso
  * байты идут сразу, а JSON собирается на клиенте.
  */
 export async function streamComplete(
-  { apiKey, model, messages, temperature = 0.4, json = false, web = false, signal },
+  { apiKey, model, messages, temperature = 0.4, json = false, web = false, maxTokens, signal },
   onDelta,
 ) {
   const { url, headers } = await endpoint(apiKey, '/chat/completions')
@@ -103,8 +103,10 @@ export async function streamComplete(
         messages,
         temperature,
         stream: true,
+        ...(maxTokens ? { max_tokens: maxTokens } : {}),
         ...(withJson ? { response_format: { type: 'json_object' } } : {}),
-        ...(withWeb ? { plugins: [{ id: 'web', max_results: 4 }] } : {}),
+        // 2 результата вместо 4: поиск — самая долгая часть запроса
+        ...(withWeb ? { plugins: [{ id: 'web', max_results: 2 }] } : {}),
       }),
     })
 
@@ -288,90 +290,142 @@ export async function parseVacancy({
   }
 }
 
-/* ---------------------------------------------------------------- урок + квиз */
+/* =================================================================== урок
+ *
+ * Урок собирается ТРЕМЯ независимыми запросами, которые идут параллельно:
+ *
+ *   1. вопросы рекрутера — маленький JSON без веб-поиска, приходит первым;
+ *   2. объяснение — обычный markdown стримом, читается по мере генерации;
+ *   3. квиз — небольшой JSON.
+ *
+ * Раньше это был один запрос, который ждал целый JSON с веб-поиском внутри:
+ * пользователь минуту смотрел на спиннер, а функция на Vercel успевала
+ * упереться в лимит времени. Теперь каждая часть появляется, как только готова.
+ * ================================================================== */
 
-function lessonSystem(lang) {
-  const language = LANG_NAMES[lang] ?? 'English'
+const LANG_NAMES_LESSON = { en: 'English', uk: 'Ukrainian' }
 
-  return `You are a mentor preparing a Project Manager / Business Analyst for interviews and real project work. You explain ONE requirement from their skill map: what it is, how it works, and how it shows up on the job.
-
-Write everything in ${language}.
-
-START with the interview angle. Write 3 or 4 questions a real recruiter or hiring manager would actually ask about this requirement — the exact wording they would use, from an easy screening question to a deeper follow-up or a situational one ("tell me about a time when…"). For each question say what they are really checking and how to answer it well (structure, what to mention, what a strong answer sounds like).
-
-Then the explanation. It must be readable in 3-5 minutes and cover:
-— what it is, in two or three sentences, no fluff;
-— how it works in practice: key concepts, steps or artefacts a PM/BA actually touches;
-— why employers ask for it and what they expect at an interview;
-— typical mistakes and misconceptions;
-— what to do first to start using it.
-
-Use the live web results you receive to keep facts, versions and terminology current, and list the sources you relied on.
-
-Then write a quiz of EXACTLY 5 questions that tests real understanding rather than memorised definitions. Each question has exactly 4 options, exactly one correct answer, and a one-sentence explanation of why it is correct.
-
-Reply with ONLY valid JSON, no markdown wrapper:
-{
-  "summary": "one sentence in ${language} — the essence of this requirement",
-  "recruiterQuestions": [
-    {
-      "question": "the question exactly as a recruiter would phrase it, in ${language}",
-      "checks": "what they are really assessing, one sentence in ${language}",
-      "answer": "how to answer well: structure and what to mention, 2-3 sentences in ${language}"
-    }
-  ],
-  "explanation": "full explanation in ${language}; markdown allowed: ## headings, lists, **bold**, \`code\`",
-  "interviewTips": ["short bullet in ${language}"],
-  "sources": [{ "title": "page title", "url": "https://…" }],
-  "quiz": [
-    {
-      "question": "question in ${language}",
-      "options": ["option 1", "option 2", "option 3", "option 4"],
-      "correct": 0,
-      "explanation": "why this option is correct, in ${language}"
-    }
+function skillFacts(skill) {
+  return [
+    `Requirement: "${skill.name}".`,
+    `Category: ${skill.category}.`,
+    skill.description ? `How a job ad described it: ${skill.description}` : '',
+    `Relevant roles: ${(skill.positions ?? []).join(', ') || 'PM'}.`,
+    `Candidate self-assessment: ${skill.level ?? 0} of 5${skill.learned ? ' (marked as learned)' : ''}.`,
   ]
-}`
+    .filter(Boolean)
+    .join('\n')
+}
+
+/** 1. Вопросы рекрутера. Быстрый запрос без веб-поиска. */
+export async function generateRecruiterQuestions({ apiKey, model, skill, lang = 'en', signal }) {
+  const language = LANG_NAMES_LESSON[lang] ?? 'English'
+
+  const content = await streamComplete({
+    apiKey,
+    model,
+    json: true,
+    temperature: 0.4,
+    maxTokens: 900,
+    signal,
+    messages: [
+      {
+        role: 'system',
+        content: `You prepare a Project Manager / Business Analyst for interviews. Write in ${language}.
+
+Give exactly 3 questions a real recruiter or hiring manager would ask about the requirement — their actual wording, from an easy screening question to a deeper or situational one. Be concise.
+
+Reply with ONLY valid JSON:
+{"questions":[{"question":"…","checks":"what they are really assessing, one sentence","answer":"how to answer well: structure and what to mention, 2 sentences"}]}`,
+      },
+      { role: 'user', content: skillFacts(skill) },
+    ],
+  })
+
+  const parsed = extractJson(content)
+  return (Array.isArray(parsed.questions) ? parsed.questions : [])
+    .filter((q) => q && typeof q.question === 'string' && q.question.trim())
+    .slice(0, 4)
+    .map((q) => ({
+      question: q.question.trim(),
+      checks: typeof q.checks === 'string' ? q.checks.trim() : '',
+      answer: typeof q.answer === 'string' ? q.answer.trim() : '',
+    }))
 }
 
 /**
- * Готовит объяснение требования и квиз из 5 вопросов.
- * web=true включает веб-поиск OpenRouter, чтобы материал был свежим.
+ * 2. Объяснение. Обычный markdown стримом — onDelta отдаёт текст по кускам,
+ * поэтому он появляется на экране сразу, как ответ в чате.
  */
-export async function generateLesson({ apiKey, model, skill, lang = 'en', web = true, signal, onProgress }) {
-  const content = await streamComplete(
+export async function generateExplanation({ apiKey, model, skill, lang = 'en', web = true, signal }, onDelta) {
+  const language = LANG_NAMES_LESSON[lang] ?? 'English'
+
+  return streamComplete(
     {
       apiKey,
       model,
-      json: true,
       web,
       temperature: 0.35,
+      maxTokens: 1300,
       signal,
       messages: [
-        { role: 'system', content: lessonSystem(lang) },
         {
-          role: 'user',
-          content: [
-            `Requirement: "${skill.name}".`,
-            `Category: ${skill.category}.`,
-            skill.description ? `How a job ad described it: ${skill.description}` : '',
-            `Relevant roles: ${(skill.positions ?? []).join(', ') || 'PM'}.`,
-            `My self-assessment: ${skill.level ?? 0} out of 5${skill.learned ? ' (marked as learned)' : ''}.`,
-            `It appeared in ${skill.mentions ?? 1} of the vacancies I looked at.`,
-            '',
-          'Explain this requirement and prepare the quiz. Search the web for current, accurate material.',
-        ]
-            .filter(Boolean)
-            .join('\n'),
+          role: 'system',
+          content: `You are a mentor for a Project Manager / Business Analyst. Explain ONE requirement so it can be read in three minutes. Write in ${language}.
+
+Cover, in this order and with these exact markdown headings:
+
+## What it is
+Two or three sentences, no fluff.
+
+## How it works
+The key concepts, steps or artefacts a PM/BA actually touches. Short bullets.
+
+## What employers expect
+What "good" looks like on the job and at an interview.
+
+## Common mistakes
+Two or three bullets.
+
+## Start here
+The first two concrete steps to begin using it.
+
+Plain markdown only — no JSON, no preamble, no closing summary. If web results are available, keep facts and terminology current and end with a "## Sources" list of markdown links.`,
         },
+        { role: 'user', content: skillFacts(skill) },
       ],
     },
-    onProgress,
+    onDelta,
   )
+}
+
+/** 3. Квиз из 5 вопросов. Небольшой JSON без веб-поиска. */
+export async function generateQuiz({ apiKey, model, skill, lang = 'en', signal }) {
+  const language = LANG_NAMES_LESSON[lang] ?? 'English'
+
+  const content = await streamComplete({
+    apiKey,
+    model,
+    json: true,
+    temperature: 0.4,
+    maxTokens: 1200,
+    signal,
+    messages: [
+      {
+        role: 'system',
+        content: `Write a quiz for a Project Manager / Business Analyst on ONE requirement. Write in ${language}.
+
+EXACTLY 5 questions that test real understanding rather than memorised definitions. Each has exactly 4 options, exactly one correct, and a one-sentence explanation. Keep questions short.
+
+Reply with ONLY valid JSON:
+{"quiz":[{"question":"…","options":["…","…","…","…"],"correct":0,"explanation":"why this option is correct"}]}`,
+      },
+      { role: 'user', content: skillFacts(skill) },
+    ],
+  })
 
   const parsed = extractJson(content)
-
-  const quiz = (Array.isArray(parsed.quiz) ? parsed.quiz : [])
+  return (Array.isArray(parsed.quiz) ? parsed.quiz : [])
     .filter((q) => q && typeof q.question === 'string' && Array.isArray(q.options) && q.options.length >= 2)
     .slice(0, 5)
     .map((q) => {
@@ -383,27 +437,4 @@ export async function generateLesson({ apiKey, model, skill, lang = 'en', web = 
         explanation: typeof q.explanation === 'string' ? q.explanation.trim() : '',
       }
     })
-
-  const recruiterQuestions = (Array.isArray(parsed.recruiterQuestions) ? parsed.recruiterQuestions : [])
-    .filter((q) => q && typeof q.question === 'string' && q.question.trim())
-    .slice(0, 4)
-    .map((q) => ({
-      question: q.question.trim(),
-      checks: typeof q.checks === 'string' ? q.checks.trim() : '',
-      answer: typeof q.answer === 'string' ? q.answer.trim() : '',
-    }))
-
-  return {
-    summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
-    recruiterQuestions,
-    explanation: typeof parsed.explanation === 'string' ? parsed.explanation : '',
-    interviewTips: Array.isArray(parsed.interviewTips)
-      ? parsed.interviewTips.filter((x) => typeof x === 'string' && x.trim()).slice(0, 8)
-      : [],
-    sources: (Array.isArray(parsed.sources) ? parsed.sources : [])
-      .filter((s) => s && typeof s.url === 'string' && /^https?:\/\//.test(s.url))
-      .slice(0, 8)
-      .map((s) => ({ title: String(s.title || s.url), url: s.url })),
-    quiz,
-  }
 }
