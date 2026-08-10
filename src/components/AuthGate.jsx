@@ -6,6 +6,21 @@ import ThemeToggle from './ThemeToggle'
 import LangToggle from './LangToggle'
 
 /**
+ * Supabase кладёт ошибку входа во фрагмент URL: #error=access_denied&error_description=…
+ * Без этого разбора просроченная или уже использованная ссылка молча возвращает
+ * на форму, и непонятно, что произошло.
+ */
+function linkError() {
+  const hash = window.location.hash.replace(/^#/, '')
+  if (!hash.includes('error')) return null
+  const params = new URLSearchParams(hash)
+  const description = params.get('error_description') || params.get('error')
+  if (!description) return null
+  history.replaceState(null, '', window.location.pathname + window.location.search)
+  return description.replace(/\+/g, ' ')
+}
+
+/**
  * Пускает дальше только с активной сессией Supabase.
  * Вход по ссылке на почту — пароль не нужен, сессия обновляется сама.
  */
@@ -13,6 +28,7 @@ export default function AuthGate({ children }) {
   const t = useT()
   const [session, setSession] = useState(null)
   const [checking, setChecking] = useState(true)
+  const [urlError] = useState(linkError)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -33,17 +49,17 @@ export default function AuthGate({ children }) {
     )
   }
 
-  if (!session) return <SignIn />
+  if (!session) return <SignIn urlError={urlError} />
 
   return children
 }
 
-function SignIn() {
+function SignIn({ urlError }) {
   const t = useT()
   const [email, setEmail] = useState('')
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState(urlError ?? null)
 
   async function submit(e) {
     e.preventDefault()
