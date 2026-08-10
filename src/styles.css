@@ -1632,6 +1632,34 @@ main {
   padding: 32px 20px;
 }
 
+.auth-switch {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-size: 13.5px;
+  color: var(--ink-3);
+}
+
+.auth-switch button {
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 13.5px;
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
+.auth-switch button:hover {
+  color: var(--accent);
+}
+
 .auth-card {
   width: 100%;
   max-width: 430px;

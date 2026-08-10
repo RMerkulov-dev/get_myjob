@@ -1,16 +1,13 @@
 /**
- * Проверка, что запрос пришёл от залогиненного владельца.
+ * Проверка, что запрос к ИИ пришёл от залогиненного пользователя.
  * Файлы с префиксом «_» Vercel не превращает в эндпоинты — это общий модуль.
+ *
+ * Регистрация открытая, поэтому белого списка нет: достаточно валидной сессии
+ * Supabase. Анонимные запросы к ключу OpenRouter при этом невозможны.
  */
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL
 const SUPABASE_ANON = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY
-
-/** Через запятую. Если пусто — пускаем любого залогиненного (RLS всё равно закрывает данные). */
-const ALLOWED = (process.env.ALLOWED_EMAILS || '')
-  .split(',')
-  .map((s) => s.trim().toLowerCase())
-  .filter(Boolean)
 
 export function fail(status, message) {
   return new Response(JSON.stringify({ error: { message } }), {
@@ -34,10 +31,7 @@ export async function requireUser(request) {
   if (!res.ok) return { error: fail(401, 'Сессия истекла — войди заново') }
 
   const user = await res.json()
-  const email = String(user?.email || '').toLowerCase()
-  if (ALLOWED.length && !ALLOWED.includes(email)) {
-    return { error: fail(403, 'Этому аккаунту доступ не разрешён') }
-  }
+  if (!user?.id) return { error: fail(401, 'Сессия недействительна') }
 
-  return { user, email }
+  return { user, email: String(user.email || '').toLowerCase() }
 }

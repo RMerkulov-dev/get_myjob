@@ -148,7 +148,8 @@ export async function saveParsedVacancy({ rawText, positionType, vacancy, items,
   const oldItems = chosen.filter((i) => i.status === 'existing' && i.existing)
 
   // 1. Новые требования.
-  //    ignoreDuplicates: true — если такой slug уже появился в базе (другая вкладка,
+  //    Уникальность — (user_id, slug): у каждого пользователя свой набор требований.
+  //    ignoreDuplicates: true — если такой slug уже появился (другая вкладка,
   //    устаревший снапшот, повторный импорт), существующую запись НЕ перезатираем:
   //    иначе выставленный уровень и отметка «выучено» обнулились бы.
   let createdRows = []
@@ -169,7 +170,7 @@ export async function saveParsedVacancy({ rawText, positionType, vacancy, items,
               level: i.level ?? 0,
               learned: (i.level ?? 0) >= 4,
             })),
-            { onConflict: 'slug', ignoreDuplicates: true },
+            { onConflict: 'user_id,slug', ignoreDuplicates: true },
           )
           .select(),
       ) ?? []

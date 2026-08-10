@@ -1,6 +1,11 @@
 -- =============================================================
 --  Skill Dossier — схема базы для Supabase
 --  Открой Supabase → SQL Editor → New query → вставь всё это → Run
+--
+--  Скрипт идемпотентный: его можно прогонять повторно.
+--  Если база уже была создана в однопользовательской версии, он сам
+--  добавит user_id, привяжет существующие строки к первому аккаунту
+--  и заменит политики. Данные не теряются.
 -- =============================================================
 
 create extension if not exists "pgcrypto";
@@ -10,7 +15,8 @@ create extension if not exists "pgcrypto";
 -- ------------------------------------------------------------------
 create table if not exists public.vacancies (
   id            uuid primary key default gen_random_uuid(),
-  title         text not null default 'Без названия',
+  user_id       uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  title         text not null default 'Untitled',
   company       text,
   position_type text not null default 'PM' check (position_type in ('PM', 'BA', 'PM/BA')),
   seniority     text,
@@ -23,12 +29,13 @@ create table if not exists public.vacancies (
 );
 
 -- ------------------------------------------------------------------
--- Требования / технологии — единый справочник без дублей
+-- Требования / технологии — справочник без дублей, свой у каждого
 -- ------------------------------------------------------------------
 create table if not exists public.skills (
   id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
   name        text not null,
-  slug        text not null unique,              -- нормализованный ключ для дедупликации
+  slug        text not null,                     -- нормализованный ключ для дедупликации
   aliases     text[] not null default '{}',      -- варианты написания, встреченные в вакансиях
   category    text not null default 'other',
   description text,
@@ -42,33 +49,78 @@ create table if not exists public.skills (
   updated_at  timestamptz not null default now()
 );
 
-create index if not exists skills_slug_idx     on public.skills (slug);
-create index if not exists skills_category_idx on public.skills (category);
-create index if not exists skills_learned_idx  on public.skills (learned);
-
 -- ------------------------------------------------------------------
 -- Связка «вакансия ↔ требование»
 -- ------------------------------------------------------------------
 create table if not exists public.vacancy_skills (
   vacancy_id uuid not null references public.vacancies (id) on delete cascade,
   skill_id   uuid not null references public.skills (id)    on delete cascade,
+  user_id    uuid not null default auth.uid() references auth.users (id) on delete cascade,
   importance text not null default 'nice' check (importance in ('must', 'nice')),
-  context    text,                                 -- цитата из вакансии
+  context    text,
   created_at timestamptz not null default now(),
   primary key (vacancy_id, skill_id)
 );
-
-create index if not exists vacancy_skills_skill_idx on public.vacancy_skills (skill_id);
 
 -- ------------------------------------------------------------------
 -- История чата с ИИ
 -- ------------------------------------------------------------------
 create table if not exists public.chat_messages (
   id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null default auth.uid() references auth.users (id) on delete cascade,
   role       text not null check (role in ('user', 'assistant')),
   content    text not null,
   created_at timestamptz not null default now()
 );
+
+-- ==================================================================
+--  Миграция с однопользовательской версии
+-- ==================================================================
+
+-- 1. Добавляем user_id тем, у кого его ещё нет
+alter table public.vacancies      add column if not exists user_id uuid references auth.users (id) on delete cascade;
+alter table public.skills         add column if not exists user_id uuid references auth.users (id) on delete cascade;
+alter table public.vacancy_skills add column if not exists user_id uuid references auth.users (id) on delete cascade;
+alter table public.chat_messages  add column if not exists user_id uuid references auth.users (id) on delete cascade;
+
+-- 2. Привязываем осиротевшие строки к первому созданному аккаунту (это владелец базы)
+do $$
+declare owner_id uuid;
+begin
+  select id into owner_id from auth.users order by created_at limit 1;
+  if owner_id is not null then
+    update public.vacancies      set user_id = owner_id where user_id is null;
+    update public.skills         set user_id = owner_id where user_id is null;
+    update public.vacancy_skills set user_id = owner_id where user_id is null;
+    update public.chat_messages  set user_id = owner_id where user_id is null;
+  end if;
+end $$;
+
+-- 3. Теперь можно требовать заполненность и подставлять автора автоматически
+do $$
+declare t text;
+begin
+  foreach t in array array['vacancies', 'skills', 'vacancy_skills', 'chat_messages'] loop
+    execute format('alter table public.%I alter column user_id set default auth.uid()', t);
+    -- not null включаем только если пустых строк не осталось
+    if (select count(*) from public.skills where user_id is null) = 0 then
+      execute format('alter table public.%I alter column user_id set not null', t);
+    end if;
+  end loop;
+end $$;
+
+-- 4. Уникальность slug теперь в пределах пользователя:
+--    «Jira» может быть у каждого своя, а внутри одного аккаунта — одна.
+alter table public.skills drop constraint if exists skills_slug_key;
+drop index if exists public.skills_user_slug_idx;
+create unique index skills_user_slug_idx on public.skills (user_id, slug);
+
+create index if not exists skills_user_idx        on public.skills (user_id);
+create index if not exists skills_category_idx    on public.skills (category);
+create index if not exists skills_learned_idx     on public.skills (learned);
+create index if not exists vacancies_user_idx     on public.vacancies (user_id);
+create index if not exists vacancy_skills_skill_idx on public.vacancy_skills (skill_id);
+create index if not exists chat_messages_user_idx on public.chat_messages (user_id, created_at);
 
 -- ------------------------------------------------------------------
 -- updated_at сам себя обновляет
@@ -89,7 +141,7 @@ create trigger skills_touch_updated_at
 -- mentions пересчитывается автоматически (в т.ч. при удалении вакансии)
 -- ------------------------------------------------------------------
 create or replace function public.sync_skill_mentions()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public as $$
 declare
   target uuid := coalesce(new.skill_id, old.skill_id);
 begin
@@ -105,24 +157,16 @@ create trigger vacancy_skills_sync_mentions
   for each row execute function public.sync_skill_mentions();
 
 -- ==================================================================
---  Доступ: данные видит только владелец, вошедший через Supabase Auth.
+--  Доступ: каждый видит и правит ТОЛЬКО свои строки.
+--  Анонимный доступ закрыт полностью.
 --
---  ЕДИНСТВЕННОЕ МЕСТО, ГДЕ МЕНЯЕТСЯ ВЛАДЕЛЕЦ — функция is_owner ниже.
---  Впиши туда свой email (тот же, которым входишь в приложение).
---  Анонимный доступ закрыт полностью: даже зная URL и anon-ключ,
---  посторонний не прочитает и не удалит ни строки.
+--  Аккаунты создаются вручную: Supabase → Authentication → Users →
+--  Add user (с включённым «Auto Confirm User»). Самостоятельную
+--  регистрацию лучше выключить: Authentication → Providers → Email →
+--  «Allow new users to sign up» → off.
 -- ==================================================================
 
-create or replace function public.is_owner()
-returns boolean
-language sql
-stable
-as $$
-  select lower(coalesce(auth.jwt() ->> 'email', '')) = any (array[
-    'fotoromario@gmail.com',
-    'roman.merkulov@dynamicalabs.com'
-  ])
-$$;
+drop function if exists public.is_owner();
 
 alter table public.vacancies      enable row level security;
 alter table public.skills         enable row level security;
@@ -133,18 +177,28 @@ do $$
 declare t text;
 begin
   foreach t in array array['vacancies', 'skills', 'vacancy_skills', 'chat_messages'] loop
-    -- сносим политику из первой версии схемы, если она осталась
+    -- политики прежних версий схемы
     execute format('drop policy if exists "personal_full_access" on public.%I', t);
     execute format('drop policy if exists "owner_full_access" on public.%I', t);
+    execute format('drop policy if exists "own_rows" on public.%I', t);
     execute format(
-      'create policy "owner_full_access" on public.%I for all to authenticated using (public.is_owner()) with check (public.is_owner())',
+      'create policy "own_rows" on public.%I for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid())',
       t);
   end loop;
 end $$;
 
--- ------------------------------------------------------------------
--- Представление skills_overview из первой версии схемы больше не нужно:
--- приложение его не запрашивало, а представления читаются с правами
--- владельца и в обход RLS — то есть были бы дыркой для анонимов.
--- ------------------------------------------------------------------
+-- Связки — отдельная, более строгая политика: FK не проверяет владельца,
+-- поэтому без этого можно было бы привязаться к чужой вакансии или требованию
+-- и накрутить чужой счётчик упоминаний.
+drop policy if exists "own_rows" on public.vacancy_skills;
+create policy "own_rows" on public.vacancy_skills
+  for all to authenticated
+  using (user_id = auth.uid())
+  with check (
+    user_id = auth.uid()
+    and exists (select 1 from public.vacancies v where v.id = vacancy_id and v.user_id = auth.uid())
+    and exists (select 1 from public.skills   s where s.id = skill_id   and s.user_id = auth.uid())
+  );
+
+-- Представление из первой версии схемы: читалось в обход RLS, поэтому убрано.
 drop view if exists public.skills_overview;
