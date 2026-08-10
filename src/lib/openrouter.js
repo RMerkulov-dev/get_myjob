@@ -79,16 +79,39 @@ export async function complete({ apiKey, model, messages, temperature = 0.2, jso
   return data.choices?.[0]?.message?.content ?? ''
 }
 
-/** Стриминг для чата: onDelta получает куски текста по мере генерации. */
-export async function streamComplete({ apiKey, model, messages, temperature = 0.4, signal }, onDelta) {
+/**
+ * Стриминг: onDelta получает куски текста по мере генерации.
+ *
+ * Стрим используется не только для чата, но и для долгих запросов с
+ * веб-поиском: на Vercel у функции ограничено время до ПЕРВОГО байта, и
+ * запрос, который ждёт целый JSON минуту, просто обрывается. Со стримом
+ * байты идут сразу, а JSON собирается на клиенте.
+ */
+export async function streamComplete(
+  { apiKey, model, messages, temperature = 0.4, json = false, web = false, signal },
+  onDelta,
+) {
   const { url, headers } = await endpoint(apiKey, '/chat/completions')
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers,
-    signal,
-    body: JSON.stringify({ model, messages, temperature, stream: true }),
-  })
+  const send = (withJson, withWeb) =>
+    fetch(url, {
+      method: 'POST',
+      headers,
+      signal,
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature,
+        stream: true,
+        ...(withJson ? { response_format: { type: 'json_object' } } : {}),
+        ...(withWeb ? { plugins: [{ id: 'web', max_results: 4 }] } : {}),
+      }),
+    })
+
+  let res = await send(json, web)
+  // не все модели поддерживают плагины / response_format — тихо повторяем без них
+  if (!res.ok && web && (res.status === 400 || res.status === 404 || res.status === 422)) res = await send(json, false)
+  if (!res.ok && json && (res.status === 400 || res.status === 422)) res = await send(false, false)
   if (!res.ok) throw await readError(res)
   if (!res.body) throw new Error(t('errors.emptyStream'))
 
@@ -315,33 +338,36 @@ Reply with ONLY valid JSON, no markdown wrapper:
  * Готовит объяснение требования и квиз из 5 вопросов.
  * web=true включает веб-поиск OpenRouter, чтобы материал был свежим.
  */
-export async function generateLesson({ apiKey, model, skill, lang = 'en', web = true, signal }) {
-  const content = await complete({
-    apiKey,
-    model,
-    json: true,
-    web,
-    temperature: 0.35,
-    signal,
-    messages: [
-      { role: 'system', content: lessonSystem(lang) },
-      {
-        role: 'user',
-        content: [
-          `Requirement: "${skill.name}".`,
-          `Category: ${skill.category}.`,
-          skill.description ? `How a job ad described it: ${skill.description}` : '',
-          `Relevant roles: ${(skill.positions ?? []).join(', ') || 'PM'}.`,
-          `My self-assessment: ${skill.level ?? 0} out of 5${skill.learned ? ' (marked as learned)' : ''}.`,
-          `It appeared in ${skill.mentions ?? 1} of the vacancies I looked at.`,
-          '',
+export async function generateLesson({ apiKey, model, skill, lang = 'en', web = true, signal, onProgress }) {
+  const content = await streamComplete(
+    {
+      apiKey,
+      model,
+      json: true,
+      web,
+      temperature: 0.35,
+      signal,
+      messages: [
+        { role: 'system', content: lessonSystem(lang) },
+        {
+          role: 'user',
+          content: [
+            `Requirement: "${skill.name}".`,
+            `Category: ${skill.category}.`,
+            skill.description ? `How a job ad described it: ${skill.description}` : '',
+            `Relevant roles: ${(skill.positions ?? []).join(', ') || 'PM'}.`,
+            `My self-assessment: ${skill.level ?? 0} out of 5${skill.learned ? ' (marked as learned)' : ''}.`,
+            `It appeared in ${skill.mentions ?? 1} of the vacancies I looked at.`,
+            '',
           'Explain this requirement and prepare the quiz. Search the web for current, accurate material.',
         ]
-          .filter(Boolean)
-          .join('\n'),
-      },
-    ],
-  })
+            .filter(Boolean)
+            .join('\n'),
+        },
+      ],
+    },
+    onProgress,
+  )
 
   const parsed = extractJson(content)
 

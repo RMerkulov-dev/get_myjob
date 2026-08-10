@@ -31,6 +31,8 @@ export default function LessonModal({ skill, settings, onClose, onPatch, toast }
   const [loading, setLoading] = useState(false)
   const [answers, setAnswers] = useState({}) // { [индекс вопроса]: индекс варианта }
   const [checked, setChecked] = useState(false)
+  const [progress, setProgress] = useState(0) // символов получено — видно, что генерация идёт
+  const [timedOut, setTimedOut] = useState(false)
   const abortRef = useRef(null)
   const bodyRef = useRef(null)
 
@@ -51,25 +53,41 @@ export default function LessonModal({ skill, settings, onClose, onPatch, toast }
     setLoading(true)
     setChecked(false)
     setAnswers({})
+    setProgress(0)
+    setTimedOut(false)
     if (refresh) setLesson(null)
 
     const controller = new AbortController()
     abortRef.current = controller
 
+    // страховка от зависшего запроса: веб-поиск бывает долгим, но не бесконечным
+    let hitTimeout = false
+    const timer = setTimeout(() => {
+      hitTimeout = true
+      controller.abort()
+    }, 150000)
+
     try {
+      let received = 0
       const next = await generateLesson({
         apiKey: settings.apiKey,
         model: settings.model,
         skill,
         lang,
         signal: controller.signal,
+        onProgress: (delta) => {
+          received += delta.length
+          setProgress(received)
+        },
       })
       setLesson(next)
       writeCache(skill.slug, lang, next)
       bodyRef.current?.scrollTo({ top: 0 })
     } catch (e) {
-      if (e.name !== 'AbortError') toast(e.message, 'error')
+      if (hitTimeout) setTimedOut(true)
+      else if (e.name !== 'AbortError') toast(e.message, 'error')
     } finally {
+      clearTimeout(timer)
       setLoading(false)
       abortRef.current = null
     }
@@ -114,7 +132,7 @@ export default function LessonModal({ skill, settings, onClose, onPatch, toast }
           {loading && !lesson && (
             <div className="lesson-loading">
               <span className="row mono" style={{ gap: 9, marginBottom: 18 }}>
-                <Spinner /> {t('lesson.loading')}
+                <Spinner /> {progress > 0 ? t('lesson.writing') : t('lesson.loading')}
               </span>
               {[0, 1, 2, 3].map((i) => (
                 <div key={i} className="skeleton" style={{ height: i === 0 ? 26 : 78, animationDelay: `${i * 0.1}s` }} />
@@ -124,7 +142,9 @@ export default function LessonModal({ skill, settings, onClose, onPatch, toast }
 
           {!loading && !lesson && (
             <div style={{ textAlign: 'center', padding: '40px 10px' }}>
-              <p className="muted" style={{ marginBottom: 16 }}>{t('lesson.failed')}</p>
+              <p className="muted" style={{ marginBottom: 16 }}>
+                {timedOut ? t('lesson.timeout') : t('lesson.failed')}
+              </p>
               <button className="btn btn-accent" onClick={() => load({ refresh: true })}>
                 <Icon name="spark" /> {t('lesson.retry')}
               </button>
