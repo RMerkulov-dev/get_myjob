@@ -198,9 +198,10 @@ RULES:
 6. Never invent requirements that are not in the text. Fewer but accurate is better.
 7. category — strictly one of: ${CATEGORY_IDS.join(', ')}.
 8. importance: "must" if the requirement is in the required/core section, "nice" if it is desirable / a plus.
-9. context — a short quote from the job description (up to 160 characters) the requirement came from, in the original language.
-10. description — one sentence in ${language}: why this matters in this role.
-11. summary — 2-3 sentences in ${language} about the vacancy.
+9. context — a short quote from the job description (up to 90 characters) the requirement came from, in the original language.
+10. description — ONE short sentence in ${language}: why this matters in this role. No more than 12 words.
+11. summary — 2 short sentences in ${language} about the vacancy.
+12. Be economical: no repetition, no filler, nothing outside the schema.
 
 Reply with ONLY valid JSON, no markdown wrapper, matching this schema:
 {
@@ -215,7 +216,6 @@ Reply with ONLY valid JSON, no markdown wrapper, matching this schema:
   "requirements": [
     {
       "name": "Jira",
-      "aliases": ["exactly as written in the vacancy"],
       "category": "tool",
       "importance": "must",
       "description": "One sentence in ${language}.",
@@ -238,7 +238,8 @@ export async function parseVacancy({
   lang = 'en',
   signal,
 }) {
-  const known = existingNames.slice(0, 400)
+  // список известных названий уходит в каждый запрос — держим его коротким
+  const known = existingNames.slice(0, 180)
   const knownBlock = known.length
     ? `\n\nALREADY KNOWN REQUIREMENTS (reuse these names character for character when you meet the same thing in meaning):\n${known.join(', ')}`
     : ''
@@ -255,12 +256,13 @@ export async function parseVacancy({
     model,
     json: true,
     temperature: 0.1,
+    maxTokens: 2200,
     signal,
     messages: [
       { role: 'system', content: parseSystem(lang) },
       {
         role: 'user',
-        content: `Position I am considering this vacancy for: ${positionType}. ${positionHint}${knownBlock}\n\nJOB DESCRIPTION:\n"""\n${text.slice(0, 24000)}\n"""`,
+        content: `Position I am considering this vacancy for: ${positionType}. ${positionHint}${knownBlock}\n\nJOB DESCRIPTION:\n"""\n${text.slice(0, 14000)}\n"""`,
       },
     ],
   })
@@ -326,7 +328,7 @@ export async function generateRecruiterQuestions({ apiKey, model, skill, lang = 
     model,
     json: true,
     temperature: 0.4,
-    maxTokens: 900,
+    maxTokens: 550,
     signal,
     messages: [
       {
@@ -357,7 +359,7 @@ Reply with ONLY valid JSON:
  * 2. Объяснение. Обычный markdown стримом — onDelta отдаёт текст по кускам,
  * поэтому он появляется на экране сразу, как ответ в чате.
  */
-export async function generateExplanation({ apiKey, model, skill, lang = 'en', web = true, signal }, onDelta) {
+export async function generateExplanation({ apiKey, model, skill, lang = 'en', web = false, signal }, onDelta) {
   const language = LANG_NAMES_LESSON[lang] ?? 'English'
 
   return streamComplete(
@@ -366,14 +368,14 @@ export async function generateExplanation({ apiKey, model, skill, lang = 'en', w
       model,
       web,
       temperature: 0.35,
-      maxTokens: 1300,
+      maxTokens: 1000,
       signal,
       messages: [
         {
           role: 'system',
           content: `You are a mentor for a Project Manager / Business Analyst. Explain ONE requirement so it can be read in three minutes. Write in ${language}.
 
-Cover, in this order and with these exact markdown headings:
+Be compact: aim for 250-350 words total. Cover, in this order and with these exact markdown headings:
 
 ## What it is
 Two or three sentences, no fluff.
@@ -390,7 +392,7 @@ Two or three bullets.
 ## Start here
 The first two concrete steps to begin using it.
 
-Plain markdown only — no JSON, no preamble, no closing summary. If web results are available, keep facts and terminology current and end with a "## Sources" list of markdown links.`,
+Plain markdown only — no JSON, no preamble, no closing summary. Do not pad: short sentences, no repetition. If web results are available, keep facts and terminology current and end with a "## Sources" list of markdown links.`,
         },
         { role: 'user', content: skillFacts(skill) },
       ],
@@ -408,7 +410,7 @@ export async function generateQuiz({ apiKey, model, skill, lang = 'en', signal }
     model,
     json: true,
     temperature: 0.4,
-    maxTokens: 1200,
+    maxTokens: 800,
     signal,
     messages: [
       {

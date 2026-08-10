@@ -1858,6 +1858,17 @@ main {
   }
 }
 
+.load-prompt {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  flex-wrap: wrap;
+  padding: 15px 17px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--paper-3) 45%, transparent);
+}
+
 .lesson-block {
   margin-top: 26px;
   padding-top: 20px;

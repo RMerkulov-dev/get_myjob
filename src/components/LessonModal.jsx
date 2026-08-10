@@ -26,6 +26,18 @@ function writeCache(slug, lang, lesson) {
   }
 }
 
+/** Плашка для части, которая ещё не запрашивалась: грузится по кнопке. */
+function LoadPrompt({ label, hint, onLoad }) {
+  return (
+    <div className="load-prompt">
+      <button className="btn btn-accent btn-sm" onClick={onLoad}>
+        <Icon name="spark" size={13} /> {label}
+      </button>
+      <span className="mono">{hint}</span>
+    </div>
+  )
+}
+
 /** Заголовок блока с индикатором: каждая часть грузится и падает независимо. */
 function BlockHead({ title, state, onRetry, retryLabel }) {
   return (
@@ -53,6 +65,7 @@ export default function LessonModal({ skill, settings, onClose, onPatch, toast }
 
   const [answers, setAnswers] = useState({})
   const [checked, setChecked] = useState(false)
+  const [sourced, setSourced] = useState(false) // объяснение дополнено веб-поиском
   // у каждой части свой контроллер: один общий переиспользовать нельзя —
   // после отмены (в т.ч. двойного вызова эффекта в StrictMode) он остаётся
   // «отменённым навсегда», и следующий запрос падает не начавшись
@@ -108,17 +121,17 @@ export default function LessonModal({ skill, settings, onClose, onPatch, toast }
 
   const loadQuestions = () =>
     run('questions', async (signal) => {
-      const data = await generateRecruiterQuestions({ apiKey: settings.apiKey, model: settings.model, skill, lang, signal })
+      const data = await generateRecruiterQuestions({ apiKey: settings.apiKey, model: settings.fastModel, skill, lang, signal })
       latest.current.questions = data
       setQuestions(data)
     })
 
-  const loadExplanation = () =>
+  const loadExplanation = ({ web = false } = {}) =>
     run('explanation', async (signal) => {
       let acc = ''
       setExplanation('')
       const full = await generateExplanation(
-        { apiKey: settings.apiKey, model: settings.model, skill, lang, signal },
+        { apiKey: settings.apiKey, model: settings.model, skill, lang, web, signal },
         (delta) => {
           acc += delta
           setExplanation(acc)
@@ -126,39 +139,44 @@ export default function LessonModal({ skill, settings, onClose, onPatch, toast }
       )
       latest.current.explanation = full || acc
       setExplanation(full || acc)
+      setSourced(web)
     })
 
   const loadQuiz = () =>
     run('quiz', async (signal) => {
-      const data = await generateQuiz({ apiKey: settings.apiKey, model: settings.model, skill, lang, signal })
+      const data = await generateQuiz({ apiKey: settings.apiKey, model: settings.fastModel, skill, lang, signal })
       latest.current.quiz = data
       setQuiz(data)
       setAnswers({})
       setChecked(false)
     })
 
-  // все три части запускаются параллельно — попап наполняется по мере готовности
+  /*
+   * Сразу грузим только объяснение. Вопросы рекрутера и квиз — по кнопке:
+   * это отдельные запросы к модели, и платить за них имеет смысл лишь тогда,
+   * когда они действительно нужны.
+   */
   useEffect(() => {
-    if (!cached) {
-      loadQuestions()
-      loadExplanation()
-      loadQuiz()
-    }
+    if (!cached?.explanation) loadExplanation()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function regenerate() {
     abortAll()
+    const hadQuestions = Boolean(questions?.length)
+    const hadQuiz = Boolean(quiz?.length)
     latest.current = { questions: null, explanation: '', quiz: null }
     setQuestions(null)
     setExplanation('')
     setQuiz(null)
     setAnswers({})
     setChecked(false)
+    setState({ questions: 'idle', explanation: 'idle', quiz: 'idle' })
     bodyRef.current?.scrollTo({ top: 0 })
-    loadQuestions()
     loadExplanation()
-    loadQuiz()
+    // то, что пользователь уже открывал, обновляем тоже; остальное — по кнопке
+    if (hadQuestions) loadQuestions()
+    if (hadQuiz) loadQuiz()
   }
 
   const quizItems = quiz ?? []
@@ -220,24 +238,45 @@ export default function LessonModal({ skill, settings, onClose, onPatch, toast }
                     )}
                   </div>
                 ))
-              : state.questions === 'loading' && (
+              : state.questions === 'loading' ? (
                   <div style={{ display: 'grid', gap: 8 }}>
                     {[0, 1, 2].map((i) => (
                       <div key={i} className="skeleton" style={{ height: 92, animationDelay: `${i * 0.1}s` }} />
                     ))}
                   </div>
+                ) : (
+                  state.questions === 'idle' && (
+                    <LoadPrompt
+                      label={t('lesson.loadQuestions')}
+                      hint={t('lesson.onDemandHint')}
+                      onLoad={loadQuestions}
+                    />
+                  )
                 )}
             {state.questions === 'error' && <p className="muted" style={{ fontSize: 13.5 }}>{t('lesson.partFailed')}</p>}
           </section>
 
           {/* -------------------------------------- 2. объяснение (стрим) */}
           <section className="lesson-block">
-            <BlockHead
-              title={t('lesson.explanation')}
-              state={state.explanation}
-              onRetry={loadExplanation}
-              retryLabel={t('lesson.retry')}
-            />
+            <div className="row" style={{ gap: 9, marginBottom: 12 }}>
+              <h3 className="lesson-h" style={{ margin: 0 }}>{t('lesson.explanation')}</h3>
+              {state.explanation === 'loading' && <Spinner />}
+              <span className="spacer" />
+              {state.explanation === 'error' && (
+                <button className="btn btn-ghost btn-sm" onClick={() => loadExplanation()}>
+                  <Icon name="refresh" size={12} /> {t('lesson.retry')}
+                </button>
+              )}
+              {state.explanation === 'done' && !sourced && (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => loadExplanation({ web: true })}
+                  title={t('lesson.addSourcesHint')}
+                >
+                  <Icon name="search" size={12} /> {t('lesson.addSources')}
+                </button>
+              )}
+            </div>
             {explanation ? (
               <div className={`lesson-text${state.explanation === 'loading' ? ' cursor-blink' : ''}`}>
                 <Markdown text={explanation} />
@@ -271,6 +310,9 @@ export default function LessonModal({ skill, settings, onClose, onPatch, toast }
                   <div key={i} className="skeleton" style={{ height: 120, animationDelay: `${i * 0.1}s` }} />
                 ))}
               </div>
+            )}
+            {quizItems.length === 0 && state.quiz === 'idle' && (
+              <LoadPrompt label={t('lesson.loadQuiz')} hint={t('lesson.onDemandHint')} onLoad={loadQuiz} />
             )}
             {quizItems.length === 0 && state.quiz === 'error' && (
               <p className="muted" style={{ fontSize: 13.5 }}>{t('lesson.partFailed')}</p>
