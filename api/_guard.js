@@ -18,20 +18,20 @@ export function fail(status, message) {
 
 export async function requireUser(request) {
   if (!SUPABASE_URL || !SUPABASE_ANON) {
-    return { error: fail(500, 'На сервере не заданы VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY') }
+    return { error: fail(500, 'Server is missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY') }
   }
 
   const header = request.headers.get('authorization') || ''
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
-  if (!token) return { error: fail(401, 'Нужно войти в приложение') }
+  if (!token) return { error: fail(401, 'Sign in to use the AI') }
 
   const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
     headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON },
   })
-  if (!res.ok) return { error: fail(401, 'Сессия истекла — войди заново') }
+  if (!res.ok) return { error: fail(401, 'Session expired — sign in again') }
 
   const user = await res.json()
-  if (!user?.id) return { error: fail(401, 'Сессия недействительна') }
+  if (!user?.id) return { error: fail(401, 'Invalid session') }
 
   return { user, email: String(user.email || '').toLowerCase() }
 }

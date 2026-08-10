@@ -9,12 +9,12 @@ const KEY = process.env.OPENROUTER_API_KEY
  * Поток от модели пробрасывается как есть — стриминг чата работает без изменений.
  */
 export default async function handler(request) {
-  if (request.method !== 'POST') return fail(405, 'Только POST')
+  if (request.method !== 'POST') return fail(405, 'POST only')
 
   const { error } = await requireUser(request)
   if (error) return error
 
-  if (!KEY) return fail(500, 'На сервере не задан OPENROUTER_API_KEY')
+  if (!KEY) return fail(500, 'Server is missing OPENROUTER_API_KEY — add it in Vercel → Settings → Environment Variables (without the VITE_ prefix) and redeploy')
 
   const upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
