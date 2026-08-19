@@ -9,6 +9,7 @@ import SkillsView from './components/SkillsView'
 import VacanciesView from './components/VacanciesView'
 import ReportView from './components/ReportView'
 import ChatView from './components/ChatView'
+import CvCheckView from './components/CvCheckView'
 import Setup from './components/Setup'
 import AuthGate from './components/AuthGate'
 import { Toasts } from './components/ui'
@@ -88,7 +89,7 @@ function Dossier() {
   )
 
   const counts = useMemo(
-    () => ({ skills: skills.length, vacancies: vacancies.length, import: 0, chat: 0, report: 0 }),
+    () => ({ skills: skills.length, vacancies: vacancies.length, import: 0, cv: 0, chat: 0, report: 0 }),
     [skills.length, vacancies.length],
   )
 
@@ -118,6 +119,7 @@ function Dossier() {
             )}
             {tab === 'report' && <ReportView {...shared} goToImport={() => setTab('import')} />}
             {tab === 'vacancies' && <VacanciesView {...shared} goToImport={() => setTab('import')} />}
+            {tab === 'cv' && <CvCheckView {...shared} />}
             {tab === 'chat' && <ChatView {...shared} />}
           </>
         )}

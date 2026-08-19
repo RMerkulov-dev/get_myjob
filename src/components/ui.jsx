@@ -44,6 +44,13 @@ export function Icon({ name, size = 15 }) {
         <path d="M4 7v3.4c0 1.1 1.8 2 4 2s4-.9 4-2V7" {...stroke} />
       </>
     ),
+    info: (
+      <>
+        <circle cx="8" cy="8" r="6" {...stroke} />
+        <path d="M8 7.2v4" {...stroke} />
+        <circle cx="8" cy="4.9" r="0.85" fill="currentColor" stroke="none" />
+      </>
+    ),
     logout: (
       <>
         <path d="M9.5 3.5H4v9h5.5" {...stroke} />
@@ -55,6 +62,47 @@ export function Icon({ name, size = 15 }) {
     <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" style={{ flexShrink: 0 }}>
       {paths[name] ?? null}
     </svg>
+  )
+}
+
+/* --------------------------------------------------------------- подсказка */
+
+/**
+ * Знак вопроса с всплывающей подсказкой. Работает и с клавиатуры (focus),
+ * поэтому это button, а не div: иначе объяснение недоступно без мыши.
+ */
+export function Hint({ text }) {
+  return (
+    <button type="button" className="hint" aria-label={text} onClick={(e) => e.preventDefault()}>
+      <Icon name="info" size={12} />
+      <span className="hint-bubble" role="tooltip">{text}</span>
+    </button>
+  )
+}
+
+/* --------------------------------------------------------------- метрика */
+
+/**
+ * Оценка полосой: величину несёт длина, значение подписано цифрой.
+ * Без числа не рисуется вовсе — иначе пустая полоса читается как «100».
+ */
+export function ScoreBar({ label, value, hint, comment }) {
+  if (!Number.isFinite(value)) return null
+  const clamped = Math.max(0, Math.min(100, Math.round(value)))
+  const band = clamped >= 80 ? 'good' : clamped >= 55 ? 'mid' : 'low'
+  return (
+    <div className="scorebar" data-band={band}>
+      <div className="row" style={{ gap: 6, marginBottom: 5 }}>
+        <span className="field-label" style={{ marginBottom: 0 }}>{label}</span>
+        {hint && <Hint text={hint} />}
+        <span className="spacer" />
+        <span className="scorebar-value mono">{clamped}/100</span>
+      </div>
+      <div className="progress-track">
+        <div className="progress-fill" style={{ width: `${clamped}%` }} />
+      </div>
+      {comment && <p className="scorebar-note">{comment}</p>}
+    </div>
   )
 }
 

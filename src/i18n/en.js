@@ -4,6 +4,7 @@ export default {
     skills: 'Skills',
     vacancies: 'Vacancies',
     report: 'Report',
+    cv: 'CV Check',
     chat: 'AI chat',
   },
 
@@ -217,6 +218,139 @@ Requirements:
     deleted: 'Vacancy deleted',
   },
 
+  cv: {
+    title: 'Document',
+    titleAccent: 'check',
+    lead: {
+      cv: 'Upload your CV as a PDF — the AI reads it and returns fixes point by point: what is wrong, where exactly, and the wording to paste instead.',
+      cover: 'Paste or upload a cover letter. The AI checks it against the checklist and rewrites the weak parts, keeping every fact you gave it.',
+      linkedin: 'Paste your headline, About section and experience entries. The AI checks both how it reads to a human and how findable you are in recruiter search.',
+      vacancy: 'Paste a job ad and the AI tells you whether it is worth your time: how well you fit, what would sink the application, what the ad hides and what to ask them.',
+    },
+    docs: { cv: 'CV', cover: 'Cover letter', linkedin: 'LinkedIn', vacancy: 'Vacancy' },
+    docsHint: {
+      cv: 'Resume / CV — PDF or plain text',
+      cover: 'Cover letter for a specific vacancy',
+      linkedin: 'LinkedIn profile: headline, About, experience',
+      vacancy: 'A job ad — should you apply, and with what',
+    },
+    langs: { en: 'EN', uk: 'UA', ru: 'RU' },
+
+    drop: 'Drop a PDF here',
+    dropHint: 'or click to pick a file · PDF, DOCX, TXT, MD up to 15 MB',
+    reading: 'reading the file…',
+    fileMeta: '{pages} p. · {chars} characters extracted',
+    fileMetaNoPages: '{chars} characters extracted',
+    loaded: '“{name}” loaded',
+    truncated: 'The document is long — only the beginning went into the review.',
+    text: 'Document text',
+    placeholder: {
+      cv: 'The text extracted from the PDF shows up here. You can also paste the CV by hand and edit it before the check.',
+      cover: `Paste the cover letter here.
+
+For example:
+
+Hi Anna,
+I saw you are building the payments team at …`,
+      linkedin: `Paste the profile text here, section by section.
+
+HEADLINE:
+…
+
+ABOUT:
+…
+
+EXPERIENCE:
+Project Manager at …`,
+      vacancy: `Paste the whole job ad here — requirements, responsibilities, conditions.
+
+For example:
+
+Senior Project Manager, fintech product
+Requirements:
+— 5+ years in IT project management
+— Jira, Confluence, BPMN
+— English C1
+…`,
+    },
+
+    answerLang: 'Answer language',
+    cvLangNote: 'the rewrites stay in the language of the CV itself',
+    criteria: 'Check criteria',
+    criteriaHint: 'One line = one point to check. Edit it, paste your own list, or keep the default one — the AI answers strictly point by point.',
+    criteriaDefault: 'Default checklist for this document type, in the answer language.',
+    criteriaCustom: 'Your own checklist. Reset brings back the default one.',
+    criteriaResetHint: 'Back to the default checklist',
+
+    useContext: 'Use my database as the target',
+    useContextHint: 'Sends a summary of your database ({skills} requirements, {vacancies} vacancies) so the check is against your real market, not against the market in general.',
+    targetVacancy: 'Tailor to one vacancy',
+    anyVacancy: 'All vacancies together',
+
+    check: 'Check with AI',
+    working: 'the AI is reviewing the document… {n} characters back',
+    thinking: 'the AI is reading the document and thinking it through…',
+    resultTitle: 'Review',
+    resultLead: 'The score, the weak spots and ready-to-paste wording show up here. Nothing leaves this page until you copy it.',
+
+    score: 'Score',
+    scoreHint: 'How likely this document is to get you an interview as it stands now: substance, wording and evidence, judged the way a recruiter reads it in twenty seconds.',
+    atsScore: 'ATS score',
+    atsHint: 'How well the document passes automated screening for a specific job: how literally the target vacancy’s terms appear in it, plus how machine-readable the layout is.',
+    fitHint: 'How well you fit this vacancy right now, based on the requirements and levels in your own database.',
+    metrics: 'Breakdown by metric',
+    metricsNote: 'Each axis is scored out of 100, higher is better, with one line on what drove the number.',
+    atsFixes: 'How to raise the ATS score',
+    atsKeywords: 'Terms from the target vacancies that are missing from the document — click to copy. Add only what you can honestly back up.',
+    strengths: 'What already works',
+    findings: 'Fixes point by point',
+    findingsCount: {
+      one: '{n} fix',
+      other: '{n} fixes',
+    },
+    missing: 'Missing entirely',
+    nextSteps: 'Do this next',
+    severity: { high: 'critical', medium: 'worth fixing', low: 'polish' },
+
+    /* У вакансии та же схема ответа значит другое — подписи свои. */
+    vacancyLabels: {
+      score: 'Fit',
+      findingsCount: {
+        one: '{n} point',
+        other: '{n} points',
+      },
+      strengths: 'Where you already match',
+      findings: 'Risks and gaps point by point',
+      missing: 'What the ad does not say',
+      after: 'how to cover it',
+    },
+    before: 'now',
+    after: 'replace with',
+    fix: 'what to do',
+    copy: 'Copy',
+    copied: 'Copied',
+    copyFailed: 'The browser would not let me use the clipboard — select the text and copy it by hand.',
+    copyReport: 'Copy the whole review',
+    again: 'Check again',
+
+    tooShort: 'Too little text — at least {n} characters are needed for a meaningful review.',
+    nothingBack: 'The model returned nothing usable. Run it again or pick another model.',
+    noDataTitle: 'The check works better with your database',
+    noDataText: 'Parse a couple of vacancies on the Import tab — then the AI checks the document against the requirements your market actually asks for.',
+
+    errors: {
+      tooBig: 'The file is over 15 MB — save the PDF smaller or paste the text by hand.',
+      encrypted: 'The PDF is password-protected. Remove the password or paste the text by hand.',
+      badPdf: 'Could not read this PDF. Try exporting it again, or paste the text by hand.',
+      noTextLayer: 'There is no text layer in this PDF — it looks like a scan or an image. Paste the text by hand, or export the CV from the editor as a real PDF.',
+      emptyFile: 'The file is empty.',
+      unsupported: 'Only PDF, DOCX, TXT and MD are supported. For anything else, export to PDF or paste the text by hand.',
+      badDocx: 'Could not read this DOCX — the file looks damaged. Open it in Word and save it again, or export to PDF.',
+      legacyDoc: 'The old .doc format is not supported. Open it in Word and save as .docx or PDF.',
+      noUnzip: 'This browser cannot unpack DOCX. Update it, or upload the CV as a PDF.',
+    },
+  },
+
   chat: {
     title: 'A word about',
     titleAccent: 'your data',
@@ -339,6 +473,8 @@ Requirements:
     emptyModelReply: 'The model returned an empty response',
     badJson: 'Could not parse the model response as JSON. Try another model or run it again.',
     emptyStream: 'Empty response from OpenRouter',
+    thoughtTooLong: 'The model spent its whole budget on reasoning and never got to the answer. Run it again — or pick a lighter model for this document.',
+    answerCut: 'The model ran out of budget in the middle of the answer. Run it again, or shorten the document and the checklist.',
     supabaseGeneric: 'Supabase error',
     hint401: ' — check the OpenRouter key (in settings or the OPENROUTER_API_KEY variable on the server)',
     hint403: ' — access denied: this account is not in ALLOWED_EMAILS',

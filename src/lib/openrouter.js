@@ -121,6 +121,7 @@ export async function streamComplete(
   const decoder = new TextDecoder()
   let buffer = ''
   let full = ''
+  let finishReason = null
 
   while (true) {
     const { done, value } = await reader.read()
@@ -135,17 +136,33 @@ export async function streamComplete(
       if (!trimmed.startsWith('data:')) continue
       const payload = trimmed.slice(5).trim()
       if (!payload || payload === '[DONE]') continue
+
+      let chunk = null
       try {
-        const chunk = JSON.parse(payload)
-        const delta = chunk.choices?.[0]?.delta?.content
-        if (delta) {
-          full += delta
-          onDelta?.(delta)
-        }
+        chunk = JSON.parse(payload)
       } catch {
-        /* keep-alive комментарии и обрывки игнорируем */
+        continue /* keep-alive комментарии и обрывки игнорируем */
+      }
+
+      // ошибка может прийти внутри уже открытого стрима: раньше её глотал
+      // catch выше, и наверх уходило бесполезное «пустой ответ модели»
+      if (chunk.error) throw new Error(`OpenRouter: ${chunk.error.message || JSON.stringify(chunk.error)}`)
+
+      const choice = chunk.choices?.[0]
+      if (choice?.finish_reason) finishReason = choice.finish_reason
+      const delta = choice?.delta?.content
+      if (delta) {
+        full += delta
+        onDelta?.(delta)
       }
     }
+  }
+
+  // у рассуждающих моделей reasoning тратит тот же лимит: если он кончился
+  // до первого слова ответа, content приходит пустым, и это не «нет ответа»
+  if (!full && finishReason === 'length') throw new Error(t('errors.thoughtTooLong'))
+  if (json && full && finishReason === 'length' && !/\}\s*$/.test(full.trim())) {
+    throw new Error(t('errors.answerCut'))
   }
 
   return full
@@ -439,4 +456,211 @@ Reply with ONLY valid JSON:
         explanation: typeof q.explanation === 'string' ? q.explanation.trim() : '',
       }
     })
+}
+
+/* ============================================================ CV Check
+ *
+ * Разбор резюме, сопроводительного письма и профиля LinkedIn по чек-листу.
+ *
+ * Здесь стриминговый JSON, а не markdown: правки нужны структурой —
+ * «пункт → проблема → цитата → замена», иначе их неудобно применять.
+ * Стрим нужен по той же причине, что и в уроках: длинный ответ через
+ * функцию на Vercel без первых байтов успевает упереться в таймаут.
+ * ================================================================== */
+
+const REVIEW_LANG_NAMES = { en: 'English', uk: 'Ukrainian', ru: 'Russian' }
+
+const DOC_KINDS = {
+  cv: {
+    what: 'CV / resume',
+    who: 'a senior technical recruiter and CV editor who hires Project Managers and Business Analysts',
+    extra:
+      'Assume the CV is screened by an ATS first and read by a human for 20 seconds after that. Judge it as a hiring document, not as an autobiography.',
+    axes: 'Keyword coverage; Achievements and numbers; Structure and readability; Wording quality; Fit to the target role',
+  },
+  vacancy: {
+    what: 'job advertisement the candidate is considering applying to',
+    who: 'a career advisor for Project Managers and Business Analysts who has read thousands of job ads and knows what they hide',
+    extra:
+      'You are NOT editing this document — it belongs to the employer. You are telling the candidate whether this vacancy is worth their time, what would sink their application, and what the ad does not say out loud. Be the person who talks them out of a bad fit.',
+    // здесь «оценка» — это соответствие кандидата, а не качество текста
+    scoreRule:
+      '"score" is 0-100: how well this candidate fits this vacancy right now, based on the target role context provided. Without that context, judge how clear and realistic the vacancy itself is and say in the verdict that the profile was not available.',
+    afterRule:
+      '"after" is NOT a rewrite of the ad. Put there a ready-to-use sentence the candidate can paste into their CV, cover letter or interview answer to cover this exact requirement — in the language of the vacancy. Use null when nothing can be said honestly.',
+    findingsRule:
+      'Findings are the candidate\'s risks and gaps against this vacancy, plus red flags in the ad itself — not writing defects.',
+    afterHint: 'a sentence the candidate can use to cover this requirement, or null',
+    atsRule:
+      '"ats_score" must be null and "ats" must be null: an employer\'s job ad does not go through an ATS.',
+    axes:
+      'Coverage of the must-have requirements; Clarity of the role and seniority; Transparency of the conditions; Absence of red flags; Growth potential for this candidate',
+  },
+  cover: {
+    what: 'cover letter',
+    who: 'a hiring manager who reads hundreds of cover letters for Project Manager and Business Analyst roles',
+    extra:
+      'A cover letter earns an interview only if it is short, specific about the company and adds facts the CV does not already state.',
+    axes: 'Specificity about the company; Proof and numbers; Length and structure; Tone and language; Fit to the vacancy',
+  },
+  linkedin: {
+    what: 'LinkedIn profile text (headline, About section, experience entries)',
+    who: 'a sourcer who finds Project Managers and Business Analysts through LinkedIn Recruiter search',
+    extra:
+      'Judge both readability for a human and findability in recruiter search: keywords, titles, skills, completeness of the profile.',
+    axes:
+      'Headline and About hook; Achievements in experience; Search visibility; Profile completeness; Consistency with the CV',
+  },
+}
+
+function reviewSystem({ docType, lang, criteria }) {
+  const doc = DOC_KINDS[docType] ?? DOC_KINDS.cv
+  const language = REVIEW_LANG_NAMES[lang] ?? 'English'
+
+  return `You are ${doc.who}. You review ONE document: a ${doc.what}. ${doc.extra}
+
+Review it strictly against the checklist below. The checklist is written by the user and may be in any language — follow its meaning, not its wording.
+
+CHECKLIST:
+"""
+${criteria}
+"""
+
+RULES:
+1. Judge only what the document actually contains. Never invent experience, numbers, employers or dates that are not in the text. If a number is missing, ask for it with a placeholder like [N] or [X%] instead of making one up.
+2. One finding = one concrete problem in one place. No general advice that would fit any document.
+3. "before" must be an EXACT quote from the document, copied character for character, up to 240 characters. Use null only when the problem is something absent from the document.
+4. ${doc.afterRule ?? '"after" must be ready to paste in place of "before" — final wording, not instructions. Keep it in the language the document itself is written in, even if this review is in another language. Preserve every fact from the original; where a fact is missing, leave a bracketed placeholder.'}
+5. Order findings by impact: severity "high" first. Between 5 and 12 findings — pick the ones that change the outcome, drop nitpicks. ${doc.findingsRule ?? ''}
+6. ${doc.scoreRule ?? '"score" is 0-100: how likely this document is to get an interview for the target role as it stands now. Be honest and strict; 85+ only for genuinely strong documents.'}
+6c. In "metrics" score these axes, in this exact order, each 0-100 where higher is always better: ${doc.axes}. Translate the axis names into ${language} but keep the order and the meaning. "comment" is one short sentence naming what drove the number — a fact from the document, not a restatement of the score.
+6b. ${
+    doc.atsRule ??
+    'In "ats" give the practical part: "missing_keywords" — terms from the target vacancy that a screening filter looks for and that are absent from the document, written exactly as the vacancy writes them, at most 12, and only ones this person can honestly claim from their experience; "fixes" — 3 to 6 concrete changes that raise the machine-readability of the document (section headings, layout, dates, spelled-out abbreviations, file structure). No generic advice: name the section and what to put there.'
+  }
+6a. ${
+    doc.atsRule ??
+    '"ats_score" is a separate 0-100 number: how well this document passes automated screening and matches a specific job. Combine two things — how literally the target vacancy\'s terms appear in the text (keyword coverage), and how machine-readable it is (single column, standard section headings, parseable dates, no tables or graphics carrying text). Judge keyword coverage against the target role context when it is provided; without it, judge machine-readability and generic role terms only.'
+  }
+7. Analysis, explanations, strengths, missing and next_steps: write in ${language}. Quotes in "before" stay in the original language.
+8. If a summary of the user's target vacancies and skills is provided, use it: check the document against those exact requirements and say what to add for them. That summary is internal data — never let its notation (mention counts, level markers, must/nice labels) leak into "after" text.
+9. Be economical. No preamble, no repetition, nothing outside the schema.
+
+Reply with ONLY valid JSON, no markdown wrapper:
+{
+  "document_language": "en | uk | ru | other",
+  "score": 0,
+  "ats_score": 0,
+  "metrics": [
+    { "name": "axis name in ${language}", "score": 0, "comment": "one sentence in ${language}: why this number" }
+  ],
+  "ats": {
+    "missing_keywords": ["term from the target vacancy that is absent from the document, in its original wording"],
+    "fixes": ["one concrete change that raises the ATS score, in ${language}"]
+  },
+  "verdict": "2-3 sentences in ${language}: what this document does well and what holds it back",
+  "strengths": ["short line in ${language}"],
+  "findings": [
+    {
+      "item": "which checklist point this belongs to, short title in ${language}",
+      "severity": "high | medium | low",
+      "problem": "what exactly is wrong, in ${language}, one or two sentences",
+      "fix": "what to do about it, in ${language}, one sentence",
+      "before": "exact quote from the document or null",
+      "after": "${doc.afterHint ?? "replacement text in the document's own language or null"}"
+    }
+  ],
+  "missing": ["something the document lacks entirely, in ${language}"],
+  "next_steps": ["concrete action, in ${language}"]
+}`
+}
+
+const SEVERITIES = ['high', 'medium', 'low']
+
+const asLines = (value, limit) =>
+  (Array.isArray(value) ? value : [])
+    .filter((x) => typeof x === 'string' && x.trim())
+    .map((x) => x.trim())
+    .slice(0, limit)
+
+/**
+ * Разбирает документ по чек-листу. context — необязательная выжимка из базы
+ * (частые требования, целевая вакансия), onProgress получает длину ответа,
+ * чтобы интерфейс показывал, что генерация идёт, а не висит.
+ */
+export async function reviewDocument(
+  { apiKey, model, docType, text, criteria, lang = 'en', context = '', signal },
+  onProgress,
+) {
+  const contextBlock = context ? `\n\nTARGET ROLE CONTEXT (from the user's own database):\n${context}` : ''
+
+  const raw = await streamComplete(
+    {
+      apiKey,
+      model,
+      json: true,
+      temperature: 0.25,
+      // с запасом: у рассуждающих моделей reasoning-токены тоже идут в этот
+      // лимит, и на 8000 разбор большого резюме обрывался ещё в рассуждениях
+      maxTokens: 16000,
+      signal,
+      messages: [
+        { role: 'system', content: reviewSystem({ docType, lang, criteria }) },
+        {
+          role: 'user',
+          content: `DOCUMENT (${DOC_KINDS[docType]?.what ?? 'document'}):\n"""\n${text.slice(0, 24000)}\n"""${contextBlock}`,
+        },
+      ],
+    },
+    (delta) => onProgress?.(delta),
+  )
+
+  const parsed = extractJson(raw)
+  const clamp = (value) => {
+    const n = Number(value)
+    return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null
+  }
+
+  // Объявление работодателя через ATS не проходит, поэтому этих метрик у него
+  // нет. Модель об этом просят, но проверять надёжнее у себя: она возвращала
+  // ats_score: 0, и полоса рисовалась пустой вместо того, чтобы исчезнуть.
+  const hasAts = docType !== 'vacancy'
+
+  return {
+    documentLanguage: typeof parsed.document_language === 'string' ? parsed.document_language.trim() : null,
+    score: clamp(parsed.score),
+    atsScore: hasAts ? clamp(parsed.ats_score) : null,
+    metrics: (Array.isArray(parsed.metrics) ? parsed.metrics : [])
+      .filter((m) => m && typeof m.name === 'string' && m.name.trim())
+      .slice(0, 6)
+      .map((m) => ({
+        name: m.name.trim(),
+        score: clamp(m.score),
+        comment: typeof m.comment === 'string' ? m.comment.trim() : '',
+      }))
+      .filter((m) => m.score !== null),
+    ats:
+      hasAts && parsed.ats
+        ? {
+            missingKeywords: asLines(parsed.ats.missing_keywords, 12),
+            fixes: asLines(parsed.ats.fixes, 6),
+          }
+        : null,
+    verdict: typeof parsed.verdict === 'string' ? parsed.verdict.trim() : '',
+    strengths: asLines(parsed.strengths, 6),
+    missing: asLines(parsed.missing, 8),
+    nextSteps: asLines(parsed.next_steps, 6),
+    findings: (Array.isArray(parsed.findings) ? parsed.findings : [])
+      .filter((f) => f && (typeof f.problem === 'string' || typeof f.item === 'string'))
+      .slice(0, 14)
+      .map((f, i) => ({
+        id: i,
+        item: typeof f.item === 'string' ? f.item.trim() : '',
+        severity: SEVERITIES.includes(f.severity) ? f.severity : 'medium',
+        problem: typeof f.problem === 'string' ? f.problem.trim() : '',
+        fix: typeof f.fix === 'string' ? f.fix.trim() : '',
+        before: typeof f.before === 'string' && f.before.trim() ? f.before.trim() : null,
+        after: typeof f.after === 'string' && f.after.trim() ? f.after.trim() : null,
+      })),
+  }
 }
