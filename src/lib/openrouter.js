@@ -478,23 +478,23 @@ const DOC_KINDS = {
       'Assume the CV is screened by an ATS first and read by a human for 20 seconds after that. Judge it as a hiring document, not as an autobiography.',
     axes: 'Keyword coverage; Achievements and numbers; Structure and readability; Wording quality; Fit to the target role',
   },
+  // Единственный режим сравнения: документ — резюме кандидата, а рядом
+  // идёт вставленный текст вакансии. Остальные типы оцениваются сами по себе.
   vacancy: {
-    what: 'job advertisement the candidate is considering applying to',
-    who: 'a career advisor for Project Managers and Business Analysts who has read thousands of job ads and knows what they hide',
+    what: 'CV / resume the candidate is about to send for one specific vacancy',
+    who: 'a senior technical recruiter who screens Project Manager and Business Analyst applications, and a career advisor who has read thousands of job ads and knows what they hide',
     extra:
-      'You are NOT editing this document — it belongs to the employer. You are telling the candidate whether this vacancy is worth their time, what would sink their application, and what the ad does not say out loud. Be the person who talks them out of a bad fit.',
-    // здесь «оценка» — это соответствие кандидата, а не качество текста
+      'You do two things at once: you compare this CV against the job ad given below, requirement by requirement, and you judge the ad itself. Take the requirements from the ad and quote its own wording — never invent requirements it does not state. Be the person who talks the candidate out of a bad fit.',
+    // здесь «оценка» — это соответствие кандидата вакансии, а не качество текста
     scoreRule:
-      '"score" is 0-100: how well this candidate fits this vacancy right now, based on the target role context provided. Without that context, judge how clear and realistic the vacancy itself is and say in the verdict that the profile was not available.',
+      '"score" is 0-100: how well this candidate fits this exact vacancy right now, judged from what the CV actually proves against the must-have requirements of the ad. 85+ only when every must-have is backed by evidence in the CV. If no job ad was provided, say so in the verdict and judge the CV against the target role context instead.',
     afterRule:
-      '"after" is NOT a rewrite of the ad. Put there a ready-to-use sentence the candidate can paste into their CV, cover letter or interview answer to cover this exact requirement — in the language of the vacancy. Use null when nothing can be said honestly.',
+      '"after" is NOT a rewrite of the ad. Put there a ready-to-paste sentence for the CV, cover letter or interview answer that covers this exact requirement, in the language the CV is written in, built only from facts the CV already proves — with a bracketed placeholder where a number is missing. Use null when nothing can be said honestly.',
     findingsRule:
-      'Findings are the candidate\'s risks and gaps against this vacancy, plus red flags in the ad itself — not writing defects.',
+      'Findings are gaps between this CV and this vacancy (a must-have with no evidence behind it, a requirement the CV understates or buries), plus red flags in the ad itself — not general writing defects of the CV.',
     afterHint: 'a sentence the candidate can use to cover this requirement, or null',
-    atsRule:
-      '"ats_score" must be null and "ats" must be null: an employer\'s job ad does not go through an ATS.',
     axes:
-      'Coverage of the must-have requirements; Clarity of the role and seniority; Transparency of the conditions; Absence of red flags; Growth potential for this candidate',
+      'Coverage of the must-have requirements; Evidence and numbers behind them; Seniority and scale match; Domain and context match; Risks and red flags in the ad',
   },
   cover: {
     what: 'cover letter',
@@ -589,10 +589,16 @@ const asLines = (value, limit) =>
  * чтобы интерфейс показывал, что генерация идёт, а не висит.
  */
 export async function reviewDocument(
-  { apiKey, model, docType, text, criteria, lang = 'en', context = '', signal },
+  { apiKey, model, docType, text, criteria, lang = 'en', context = '', vacancyText = '', signal },
   onProgress,
 ) {
   const contextBlock = context ? `\n\nTARGET ROLE CONTEXT (from the user's own database):\n${context}` : ''
+  // Вакансия идёт отдельным блоком и дословно: соответствие считается по её
+  // формулировкам, поэтому пересказывать её в контекст нельзя.
+  const vacancy = vacancyText.trim()
+  const vacancyBlock = vacancy
+    ? `\n\nTHE VACANCY THIS CV IS COMPARED AGAINST (verbatim job ad):\n"""\n${vacancy.slice(0, 12000)}\n"""`
+    : ''
 
   const raw = await streamComplete(
     {
@@ -608,7 +614,7 @@ export async function reviewDocument(
         { role: 'system', content: reviewSystem({ docType, lang, criteria }) },
         {
           role: 'user',
-          content: `DOCUMENT (${DOC_KINDS[docType]?.what ?? 'document'}):\n"""\n${text.slice(0, 24000)}\n"""${contextBlock}`,
+          content: `DOCUMENT (${DOC_KINDS[docType]?.what ?? 'document'}):\n"""\n${text.slice(0, 24000)}\n"""${vacancyBlock}${contextBlock}`,
         },
       ],
     },
@@ -621,15 +627,11 @@ export async function reviewDocument(
     return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null
   }
 
-  // Объявление работодателя через ATS не проходит, поэтому этих метрик у него
-  // нет. Модель об этом просят, но проверять надёжнее у себя: она возвращала
-  // ats_score: 0, и полоса рисовалась пустой вместо того, чтобы исчезнуть.
-  const hasAts = docType !== 'vacancy'
 
   return {
     documentLanguage: typeof parsed.document_language === 'string' ? parsed.document_language.trim() : null,
     score: clamp(parsed.score),
-    atsScore: hasAts ? clamp(parsed.ats_score) : null,
+    atsScore: clamp(parsed.ats_score),
     metrics: (Array.isArray(parsed.metrics) ? parsed.metrics : [])
       .filter((m) => m && typeof m.name === 'string' && m.name.trim())
       .slice(0, 6)
@@ -640,7 +642,7 @@ export async function reviewDocument(
       }))
       .filter((m) => m.score !== null),
     ats:
-      hasAts && parsed.ats
+      parsed.ats
         ? {
             missingKeywords: asLines(parsed.ats.missing_keywords, 12),
             fixes: asLines(parsed.ats.fixes, 6),

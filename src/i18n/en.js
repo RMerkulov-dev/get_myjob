@@ -6,6 +6,7 @@ export default {
     report: 'Report',
     cv: 'CV Check',
     chat: 'AI chat',
+    planner: 'Planner',
   },
 
   theme: {
@@ -225,14 +226,14 @@ Requirements:
       cv: 'Upload your CV as a PDF — the AI reads it and returns fixes point by point: what is wrong, where exactly, and the wording to paste instead.',
       cover: 'Paste or upload a cover letter. The AI checks it against the checklist and rewrites the weak parts, keeping every fact you gave it.',
       linkedin: 'Paste your headline, About section and experience entries. The AI checks both how it reads to a human and how findable you are in recruiter search.',
-      vacancy: 'Paste a job ad and the AI tells you whether it is worth your time: how well you fit, what would sink the application, what the ad hides and what to ask them.',
+      vacancy: 'Two windows: your CV and the job ad. The AI compares them requirement by requirement — what you already prove, what would sink the application, what the ad hides and what to ask them.',
     },
-    docs: { cv: 'CV', cover: 'Cover letter', linkedin: 'LinkedIn', vacancy: 'Vacancy' },
+    docs: { cv: 'CV', cover: 'Cover letter', linkedin: 'LinkedIn', vacancy: 'CV ↔ vacancy' },
     docsHint: {
       cv: 'Resume / CV — PDF or plain text',
       cover: 'Cover letter for a specific vacancy',
       linkedin: 'LinkedIn profile: headline, About, experience',
-      vacancy: 'A job ad — should you apply, and with what',
+      vacancy: 'Compare your CV against one job ad — should you apply, and with what',
     },
     langs: { en: 'EN', uk: 'UA', ru: 'RU' },
 
@@ -262,16 +263,7 @@ ABOUT:
 
 EXPERIENCE:
 Project Manager at …`,
-      vacancy: `Paste the whole job ad here — requirements, responsibilities, conditions.
-
-For example:
-
-Senior Project Manager, fintech product
-Requirements:
-— 5+ years in IT project management
-— Jira, Confluence, BPMN
-— English C1
-…`,
+      vacancy: `The CV you are about to send for this vacancy. Upload the PDF above, take it from the CV tab, or paste it here.`,
     },
 
     answerLang: 'Answer language',
@@ -283,11 +275,30 @@ Requirements:
     criteriaResetHint: 'Back to the default checklist',
 
     useContext: 'Use my database as the target',
-    useContextHint: 'Sends a summary of your database ({skills} requirements, {vacancies} vacancies) so the check is against your real market, not against the market in general.',
-    targetVacancy: 'Tailor to one vacancy',
-    anyVacancy: 'All vacancies together',
+    useContextHint: 'Sends a summary of your skills and levels ({skills} requirements) on top of the ad, so the fit takes your own self-assessment into account.',
 
+    yourCv: 'Your CV',
+    vacancyText: 'Vacancy text',
+    vacancyTextHint: 'The ad you are comparing the CV against. Paste it whole — requirements, responsibilities, conditions.',
+    vacancyPlaceholder: `Paste the whole job ad here — requirements, responsibilities, conditions.
+
+For example:
+
+Senior Project Manager, fintech product
+Requirements:
+— 5+ years in IT project management
+— Jira, Confluence, BPMN
+— English C1
+…`,
+    vacancyFromDb: 'Take a saved vacancy',
+    vacancyPickNone: 'Paste by hand',
+    vacancyFilled: 'The text of “{title}” is in the field',
+    vacancyTooShort: 'Paste the job ad too — at least {n} characters, otherwise there is nothing to compare against.',
+    fillFromCv: 'Take the CV from the CV tab',
+    filledFromCv: 'The CV text is copied from the CV tab',
+    noCvYet: 'The CV tab is still empty — upload the CV there or paste it here.',
     check: 'Check with AI',
+    compare: 'Compare with AI',
     working: 'the AI is reviewing the document… {n} characters back',
     thinking: 'the AI is reading the document and thinking it through…',
     resultTitle: 'Review',
@@ -297,7 +308,7 @@ Requirements:
     scoreHint: 'How likely this document is to get you an interview as it stands now: substance, wording and evidence, judged the way a recruiter reads it in twenty seconds.',
     atsScore: 'ATS score',
     atsHint: 'How well the document passes automated screening for a specific job: how literally the target vacancy’s terms appear in it, plus how machine-readable the layout is.',
-    fitHint: 'How well you fit this vacancy right now, based on the requirements and levels in your own database.',
+    fitHint: 'How well you fit this vacancy right now: what the CV actually proves against the must-have requirements of the ad you pasted.',
     metrics: 'Breakdown by metric',
     metricsNote: 'Each axis is scored out of 100, higher is better, with one line on what drove the number.',
     atsFixes: 'How to raise the ATS score',
@@ -464,6 +475,81 @@ Requirements:
     score: '{score} of {total} correct',
     markLearned: 'Mark as learned',
     marked: '“{name}” marked as learned',
+  },
+
+  planner: {
+    title: 'Plan',
+    titleAccent: 'and rhythm',
+    lead: 'The search is a routine: posts, applications, calls. Put the numbers in the calendar and see whether the week held.',
+    today: 'Today',
+    prevMonth: 'Previous month',
+    nextMonth: 'Next month',
+    thisMonth: 'This month',
+    plan: 'plan',
+    fact: 'done',
+    goal: 'goal',
+    ofPlan: '{fact} of {plan}',
+    noPlanYet: 'nothing planned',
+    week: 'week',
+    weekTotal: 'Week total',
+    goalsTitle: 'Goals for the month',
+    goalsLead: 'The upper bar of the month. Leave a zero and the metric is measured against the plan only.',
+    editGoals: 'Month goals',
+    goalsSaved: 'Goals saved',
+    dayEmpty: 'The day is free — click it and set the plan.',
+    daySaved: 'Saved for {date}',
+    dayCleared: 'The day is cleared',
+    noteLabel: 'Note for the day',
+    notePlaceholder: 'What exactly to do: which companies to write to, which post to publish…',
+    postsSection: 'LinkedIn posts',
+    postsLead: 'One card per post: topic, status, link when it goes live.',
+    addPost: 'Add a post',
+    postTitle: 'Headline or idea',
+    postTitlePlaceholder: 'e.g. How I cut the release cycle in half',
+    postTopic: 'Topic',
+    postTopicPlaceholder: 'delivery, discovery, career…',
+    postUrl: 'Link to the published post',
+    postNotes: 'Draft, thesis, structure',
+    removePost: 'Remove the post',
+    untitledPost: 'Untitled post',
+    postsCount: {
+      one: '{count} post',
+      other: '{count} posts',
+    },
+    metrics: {
+      posts: 'LinkedIn posts',
+      applications: 'My applications',
+      responses: 'Company replies',
+      interviews: 'Interviews',
+      stages: 'Stages passed',
+    },
+    metricsShort: {
+      posts: 'PO',
+      applications: 'AP',
+      responses: 'RE',
+      interviews: 'IV',
+      stages: 'ST',
+    },
+    metricsHint: {
+      posts: 'Posts you publish on LinkedIn — the part of the funnel that depends on you alone.',
+      applications: 'Applications you sent yourself.',
+      responses: 'Replies from companies: any answer, a rejection included.',
+      interviews: 'Calls that actually happened — screening, technical, final.',
+      stages: 'Stages you passed and were invited further.',
+    },
+    status: {
+      idea: 'Idea',
+      draft: 'Draft',
+      scheduled: 'Scheduled',
+      published: 'Published',
+    },
+    statusLabel: 'Status',
+    legend: 'Legend',
+    conversion: 'Conversion',
+    conversionLead: 'How the funnel narrows this month.',
+    perResponse: 'applications per reply',
+    perInterview: 'replies per interview',
+    noData: 'no data yet',
   },
 
   errors: {

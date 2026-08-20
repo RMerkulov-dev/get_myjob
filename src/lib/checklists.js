@@ -142,8 +142,8 @@ const LINKEDIN = {
 }
 
 const VACANCY = {
-  en: `1. Match. Which must-have requirements of this vacancy are already covered by the candidate's experience, and which are not covered at all.
-2. Blocking gaps. What exactly gets this application rejected at the screening stage, and whether it can be closed before applying.
+  en: `1. Match. Which must-have requirements of this vacancy the CV already proves with facts and numbers, and which it does not cover at all. Check the ad's own terms literally: a requirement the CV words differently is a screening risk.
+2. Blocking gaps. What exactly gets this application rejected at the screening stage — whether the CV lacks the experience or merely buries it — and whether it can be closed before applying.
 3. Role and seniority. Does the title match the responsibilities and the scale described? A "Senior PM" who is really a coordinator, or a "PM" who is really a delivery director — say so.
 4. Red flags in the ad. Three roles in one (PM + BA + QA + support), no word about the team, "family atmosphere" instead of process, unpaid test assignments, an unnamed product, a requirements list nobody could satisfy.
 5. What the ad hides. Salary, work format, timezone, contract type, team size, product stage, who the manager is — list what is missing and has to be asked.
@@ -155,8 +155,8 @@ const VACANCY = {
 11. Interview prep. What this ad will certainly be asked about, and the questions worth asking them.
 12. Verdict. Apply now, apply after closing a specific gap, or skip — and why.`,
 
-  uk: `1. Відповідність. Які обов'язкові вимоги цієї вакансії досвід кандидата вже покриває, а які не покриває зовсім.
-2. Блокери. Що саме відсіє заявку на етапі скринінгу і чи можна це закрити до відправки.
+  uk: `1. Відповідність. Які обов'язкові вимоги цієї вакансії резюме вже підтверджує фактами й цифрами, а які не покриває зовсім. Перевіряй терміни оголошення дослівно: вимога, названа в резюме інакше, — це ризик на скринінгу.
+2. Блокери. Що саме відсіє заявку на етапі скринінгу — досвіду немає взагалі чи він просто загублений у тексті — і чи можна це закрити до відправки.
 3. Роль і рівень. Чи збігається назва позиції з обов'язками й масштабом? Якщо «Senior PM» насправді координатор, а «PM» — насправді delivery director, скажи про це.
 4. Червоні прапорці в оголошенні. Три ролі в одній (PM + BA + QA + підтримка), жодного слова про команду, «сімейна атмосфера» замість процесів, безоплатні тестові, неназваний продукт, список вимог, який не закриє ніхто.
 5. Що оголошення приховує. Зарплата, формат роботи, часовий пояс, тип контракту, розмір команди, стадія продукту, хто керівник — перелічи, чого немає і про що доведеться запитати.
@@ -168,8 +168,8 @@ const VACANCY = {
 11. Підготовка до інтерв'ю. Про що з цього оголошення точно спитають і які питання варто поставити їм.
 12. Вердикт. Відгукуватися зараз, відгукуватися після закриття конкретної прогалини або пропустити — і чому.`,
 
-  ru: `1. Соответствие. Какие обязательные требования этой вакансии опыт кандидата уже закрывает, а какие не закрывает совсем.
-2. Блокеры. Что именно отсеет заявку на этапе скрининга и можно ли это закрыть до отправки.
+  ru: `1. Соответствие. Какие обязательные требования этой вакансии резюме уже подтверждает фактами и цифрами, а какие не закрывает совсем. Сверяй термины объявления дословно: требование, названное в резюме иначе, — риск на скрининге.
+2. Блокеры. Что именно отсеет заявку на этапе скрининга — опыта нет вообще или он просто потерян в тексте — и можно ли это закрыть до отправки.
 3. Роль и уровень. Совпадает ли название позиции с обязанностями и масштабом? Если «Senior PM» на деле координатор, а «PM» — на деле delivery director, скажи об этом.
 4. Красные флаги в объявлении. Три роли в одной (PM + BA + QA + поддержка), ни слова о команде, «семейная атмосфера» вместо процессов, бесплатные тестовые, неназванный продукт, список требований, который не закроет никто.
 5. Что объявление скрывает. Зарплата, формат работы, часовой пояс, тип контракта, размер команды, стадия продукта, кто руководитель — перечисли, чего нет и о чём придётся спросить.

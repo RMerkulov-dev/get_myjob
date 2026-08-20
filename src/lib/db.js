@@ -235,3 +235,64 @@ export async function clearChat() {
   const sb = requireSupabase()
   unwrap(await sb.from('chat_messages').delete().neq('id', '00000000-0000-0000-0000-000000000000'))
 }
+
+// ---------------------------------------------------------------- планировщик
+
+/**
+ * Дни и посты за диапазон календарной сетки одним заходом.
+ * Границы включительные, формат — 'YYYY-MM-DD'.
+ */
+export async function fetchPlanRange(from, to) {
+  const sb = requireSupabase()
+  const [days, posts] = await Promise.all([
+    sb.from('plan_days').select('*').gte('day', from).lte('day', to).order('day', { ascending: true }),
+    sb.from('linkedin_posts').select('*').gte('day', from).lte('day', to).order('created_at', { ascending: true }),
+  ])
+  return { days: unwrap(days) ?? [], posts: unwrap(posts) ?? [] }
+}
+
+/** Цель месяца; month — первое число ('2026-08-01'). Нет строки — нет цели. */
+export async function fetchPlanGoal(month) {
+  const sb = requireSupabase()
+  const rows = unwrap(await sb.from('plan_goals').select('*').eq('month', month).limit(1))
+  return rows?.[0] ?? null
+}
+
+/** Один день на пользователя: конфликт по (user_id, day) обновляет существующую строку. */
+export async function savePlanDay(day, patch) {
+  const sb = requireSupabase()
+  const rows = unwrap(
+    await sb.from('plan_days').upsert({ ...patch, day }, { onConflict: 'user_id,day' }).select(),
+  )
+  return rows?.[0]
+}
+
+export async function deletePlanDay(id) {
+  const sb = requireSupabase()
+  unwrap(await sb.from('plan_days').delete().eq('id', id))
+}
+
+export async function savePlanGoal(month, patch) {
+  const sb = requireSupabase()
+  const rows = unwrap(
+    await sb.from('plan_goals').upsert({ ...patch, month }, { onConflict: 'user_id,month' }).select(),
+  )
+  return rows?.[0]
+}
+
+export async function createLinkedinPost(post) {
+  const sb = requireSupabase()
+  const rows = unwrap(await sb.from('linkedin_posts').insert(post).select())
+  return rows?.[0]
+}
+
+export async function updateLinkedinPost(id, patch) {
+  const sb = requireSupabase()
+  const rows = unwrap(await sb.from('linkedin_posts').update(patch).eq('id', id).select())
+  return rows?.[0]
+}
+
+export async function deleteLinkedinPost(id) {
+  const sb = requireSupabase()
+  unwrap(await sb.from('linkedin_posts').delete().eq('id', id))
+}

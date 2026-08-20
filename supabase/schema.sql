@@ -202,3 +202,97 @@ create policy "own_rows" on public.vacancy_skills
 
 -- Представление из первой версии схемы: читалось в обход RLS, поэтому убрано.
 drop view if exists public.skills_overview;
+
+-- ==================================================================
+--  Планировщик: ритм постов, откликов и собеседований по календарю
+--
+--  Три таблицы:
+--    plan_days      — на каждый день план и факт по пяти метрикам
+--    linkedin_posts — карточки постов, привязанные к дню
+--    plan_goals     — цель на месяц (первое число месяца как ключ)
+-- ==================================================================
+
+create table if not exists public.plan_days (
+  id                 uuid primary key default gen_random_uuid(),
+  user_id            uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  day                date not null,
+  plan_posts         smallint not null default 0 check (plan_posts        between 0 and 999),
+  fact_posts         smallint not null default 0 check (fact_posts        between 0 and 999),
+  plan_applications  smallint not null default 0 check (plan_applications between 0 and 999),
+  fact_applications  smallint not null default 0 check (fact_applications between 0 and 999),
+  plan_responses     smallint not null default 0 check (plan_responses    between 0 and 999),
+  fact_responses     smallint not null default 0 check (fact_responses    between 0 and 999),
+  plan_interviews    smallint not null default 0 check (plan_interviews   between 0 and 999),
+  fact_interviews    smallint not null default 0 check (fact_interviews   between 0 and 999),
+  plan_stages        smallint not null default 0 check (plan_stages       between 0 and 999),
+  fact_stages        smallint not null default 0 check (fact_stages       between 0 and 999),
+  note               text,
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now()
+);
+
+-- Один день — одна строка у каждого пользователя (нужно для upsert по (user_id, day))
+create unique index if not exists plan_days_user_day_idx on public.plan_days (user_id, day);
+
+create table if not exists public.linkedin_posts (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  day        date not null,
+  title      text not null default '',
+  topic      text,
+  status     text not null default 'idea' check (status in ('idea', 'draft', 'scheduled', 'published')),
+  url        text,
+  notes      text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists linkedin_posts_user_day_idx on public.linkedin_posts (user_id, day);
+
+create table if not exists public.plan_goals (
+  id                uuid primary key default gen_random_uuid(),
+  user_id           uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  month             date not null,                  -- всегда первое число месяца
+  goal_posts        smallint not null default 0 check (goal_posts        between 0 and 9999),
+  goal_applications smallint not null default 0 check (goal_applications between 0 and 9999),
+  goal_responses    smallint not null default 0 check (goal_responses    between 0 and 9999),
+  goal_interviews   smallint not null default 0 check (goal_interviews   between 0 and 9999),
+  goal_stages       smallint not null default 0 check (goal_stages       between 0 and 9999),
+  note              text,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
+);
+
+create unique index if not exists plan_goals_user_month_idx on public.plan_goals (user_id, month);
+
+-- updated_at обновляется тем же триггером, что и у навыков
+drop trigger if exists plan_days_touch_updated_at on public.plan_days;
+create trigger plan_days_touch_updated_at
+  before update on public.plan_days
+  for each row execute function public.touch_updated_at();
+
+drop trigger if exists linkedin_posts_touch_updated_at on public.linkedin_posts;
+create trigger linkedin_posts_touch_updated_at
+  before update on public.linkedin_posts
+  for each row execute function public.touch_updated_at();
+
+drop trigger if exists plan_goals_touch_updated_at on public.plan_goals;
+create trigger plan_goals_touch_updated_at
+  before update on public.plan_goals
+  for each row execute function public.touch_updated_at();
+
+-- Доступ: как и везде — только свои строки, анонимам закрыто
+alter table public.plan_days      enable row level security;
+alter table public.linkedin_posts enable row level security;
+alter table public.plan_goals     enable row level security;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['plan_days', 'linkedin_posts', 'plan_goals'] loop
+    execute format('drop policy if exists "own_rows" on public.%I', t);
+    execute format(
+      'create policy "own_rows" on public.%I for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid())',
+      t);
+  end loop;
+end $$;

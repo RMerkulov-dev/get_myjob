@@ -6,7 +6,12 @@ import { useI18n } from '../i18n'
 import { Empty, Hint, Icon, PageHead, ScoreBar, Segmented, Spinner } from './ui'
 
 const STORE_KEY = 'skill-dossier.cvcheck'
+// v2: на последней вкладке главным документом стало резюме, а объявление
+// переехало в отдельное поле — старые черновики нужно перенести, а не
+// выдавать объявление за резюме.
+const STORE_VERSION = 2
 const MIN_CHARS = 220
+const MIN_VACANCY_CHARS = 160
 
 /** Резюме пишут по-английски, письмо и профиль — часто на языке рынка. */
 function defaultLang(docType, uiLang) {
@@ -18,6 +23,7 @@ const emptyDoc = (docType, uiLang) => ({
   text: '',
   fileName: '',
   pages: 0,
+  vacancyText: '', // только у режима сравнения: объявление, с которым сверяем резюме
   lang: defaultLang(docType, uiLang),
   criteria: null, // null — берём чек-лист по умолчанию для текущего языка
   result: null,
@@ -33,17 +39,33 @@ function loadStore(uiLang) {
   }
   const docs = {}
   for (const id of DOC_TYPES) docs[id] = { ...emptyDoc(id, uiLang), ...(saved.docs?.[id] ?? {}) }
+
+  // Миграция: то, что лежало в тексте последней вкладки, было объявлением.
+  // Разбор считался по прежней схеме, поэтому его сбрасываем.
+  if (saved.version !== STORE_VERSION && docs.vacancy.text && !docs.vacancy.vacancyText) {
+    docs.vacancy = {
+      ...docs.vacancy,
+      vacancyText: docs.vacancy.text,
+      text: '',
+      fileName: '',
+      pages: 0,
+      result: null,
+    }
+  }
+
   return {
+    version: STORE_VERSION,
     docType: DOC_TYPES.includes(saved.docType) ? saved.docType : blank.docType,
     docs,
   }
 }
 
 /**
- * Выжимка из базы, чтобы модель проверяла документ под конкретный рынок,
- * а не «в целом». Держим её короткой: это добавка к каждому запросу.
+ * Выжимка по навыкам из базы — добавка к режиму сравнения: сама вакансия
+ * уходит в запрос дословно, а это её дополняет самооценкой уровней.
+ * Держим её короткой: это добавка к каждому запросу.
  */
-function buildTargetContext({ skills, vacancies, vacancyId }) {
+function buildTargetContext({ skills }) {
   const lines = []
 
   const demanded = [...skills]
@@ -66,20 +88,6 @@ function buildTargetContext({ skills, vacancies, vacancyId }) {
 
   const strong = skills.filter((s) => s.learned || (s.level ?? 0) >= 4).map((s) => s.name)
   if (strong.length) lines.push(`Skills the person considers solid: ${strong.slice(0, 25).join(', ')}.`)
-
-  const vacancy = vacancies.find((v) => v.id === vacancyId)
-  if (vacancy) {
-    const reqs = (vacancy.vacancy_skills ?? []).map((l) => l.skills?.name).filter(Boolean)
-    lines.push(
-      `THE DOCUMENT IS BEING TAILORED FOR THIS EXACT VACANCY:`,
-      `${vacancy.title}${vacancy.company ? ` at ${vacancy.company}` : ''} · ${vacancy.position_type}${
-        vacancy.seniority ? ` · ${vacancy.seniority}` : ''
-      }`,
-      vacancy.summary ? `Summary: ${vacancy.summary}` : '',
-      reqs.length ? `Its requirements: ${reqs.join(', ')}.` : '',
-      vacancy.raw_text ? `Original ad (trimmed):\n${vacancy.raw_text.slice(0, 2500)}` : '',
-    )
-  }
 
   return lines.filter(Boolean).join('\n')
 }
@@ -141,6 +149,7 @@ export default function CvCheckView({ skills, vacancies, settings, toast }) {
   const doc = docs[docType]
   const criteria = doc.criteria ?? defaultChecklist(docType, doc.lang)
   const chars = doc.text.trim().length
+  const vacancyChars = (doc.vacancyText ?? '').trim().length
 
   // Схема ответа у всех типов одна, но у вакансии те же поля значат другое:
   // не «правки в текст», а соответствие кандидата и риски. Меняем подписи.
@@ -149,6 +158,8 @@ export default function CvCheckView({ skills, vacancies, settings, toast }) {
     (key) => t(isVacancy ? `cv.vacancyLabels.${key}` : `cv.${key}`),
     [t, isVacancy],
   )
+  // В режиме сравнения главный документ — резюме, а не «документ вообще»
+  const docLabel = isVacancy ? t('cv.yourCv') : t('cv.text')
 
   // Текст документа и правки живут в localStorage: переключение вкладок и
   // перезагрузка страницы не должны стирать ответ, за который уже заплачено.
@@ -186,10 +197,33 @@ export default function CvCheckView({ skills, vacancies, settings, toast }) {
   )
   const langOptions = useMemo(() => REVIEW_LANGS.map((id) => ({ id, label: t(`cv.langs.${id}`) })), [t])
 
+  // Сравнение с базой осталось только у режима сравнения: остальные документы
+  // оцениваются сами по себе, по чек-листу.
   const context = useMemo(
-    () => (useContext ? buildTargetContext({ skills, vacancies, vacancyId }) : ''),
-    [useContext, skills, vacancies, vacancyId],
+    () => (isVacancy && useContext ? buildTargetContext({ skills }) : ''),
+    [isVacancy, useContext, skills],
   )
+
+  /** Готовая вакансия из базы — сразу текстом в поле сравнения. */
+  function pickVacancy(id) {
+    setVacancyId(id)
+    if (!id) return
+    const vacancy = vacancies.find((v) => v.id === id)
+    if (!vacancy?.raw_text) return
+    patchDoc({ vacancyText: vacancy.raw_text, result: null })
+    toast(t('cv.vacancyFilled', { title: vacancy.title }), 'success')
+  }
+
+  /** Резюме уже разобрано на первой вкладке — незачем загружать его дважды. */
+  function takeCvFromTab() {
+    const source = docs.cv
+    if (!source.text.trim()) {
+      toast(t('cv.noCvYet'), 'info')
+      return
+    }
+    patchDoc({ text: source.text, fileName: source.fileName, pages: source.pages, result: null })
+    toast(t('cv.filledFromCv'), 'success')
+  }
 
   async function handleFile(file) {
     if (!file) return
@@ -212,6 +246,10 @@ export default function CvCheckView({ skills, vacancies, settings, toast }) {
       toast(t('cv.tooShort', { n: MIN_CHARS }), 'error')
       return
     }
+    if (isVacancy && vacancyChars < MIN_VACANCY_CHARS) {
+      toast(t('cv.vacancyTooShort', { n: MIN_VACANCY_CHARS }), 'error')
+      return
+    }
     const controller = new AbortController()
     abortRef.current = controller
     setBusy(true)
@@ -229,6 +267,7 @@ export default function CvCheckView({ skills, vacancies, settings, toast }) {
           criteria,
           lang: doc.lang,
           context,
+          vacancyText: isVacancy ? doc.vacancyText ?? '' : '',
           signal: controller.signal,
         },
         (delta) => {
@@ -321,22 +360,72 @@ export default function CvCheckView({ skills, vacancies, settings, toast }) {
             )}
           </label>
 
-          <label className="field" style={{ marginTop: 14 }}>
-            <span className="field-label">
-              {t('cv.text')}
-              <span className="mono" style={{ marginLeft: 8, textTransform: 'none' }}>
-                {chars ? t('import.chars', { n: formatNumber(chars) }) : t('import.empty')}
+          <div className="field" style={{ marginTop: 14 }}>
+            <div className="row wrap" style={{ gap: 8, marginBottom: 7 }}>
+              <span className="field-label" style={{ marginBottom: 0 }}>
+                {docLabel}
+                <span className="mono" style={{ marginLeft: 8, textTransform: 'none' }}>
+                  {chars ? t('import.chars', { n: formatNumber(chars) }) : t('import.empty')}
+                </span>
               </span>
-            </span>
+              <span className="spacer" />
+              {isVacancy && (
+                <button className="btn btn-ghost btn-sm" onClick={takeCvFromTab}>
+                  <Icon name="doc" size={12} /> {t('cv.fillFromCv')}
+                </button>
+              )}
+            </div>
             <textarea
               className="textarea"
               style={{ minHeight: 220 }}
+              aria-label={docLabel}
               placeholder={t(`cv.placeholder.${docType}`)}
               value={doc.text}
               onChange={(e) => patchDoc({ text: e.target.value })}
               spellCheck={false}
             />
-          </label>
+          </div>
+
+          {/* ------------------------------------ вакансия, с которой сверяем */}
+          {isVacancy && (
+            <div className="panel" style={{ marginTop: 14, padding: 16 }}>
+              <div className="row wrap" style={{ gap: 8 }}>
+                <span className="field-label" style={{ marginBottom: 0 }}>
+                  {t('cv.vacancyText')}
+                  <span className="mono" style={{ marginLeft: 8, textTransform: 'none' }}>
+                    {vacancyChars ? t('import.chars', { n: formatNumber(vacancyChars) }) : t('import.empty')}
+                  </span>
+                </span>
+                <span className="spacer" />
+                {vacancies.length > 0 && (
+                  <select
+                    className="select"
+                    style={{ width: 'auto', maxWidth: 240, padding: '5px 9px', fontSize: 12.5 }}
+                    value={vacancyId}
+                    onChange={(e) => pickVacancy(e.target.value)}
+                  >
+                    <option value="">{t('cv.vacancyFromDb')}</option>
+                    {vacancies.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.title}
+                        {v.company ? ` — ${v.company}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              <p className="report-note" style={{ marginTop: 8, marginBottom: 8 }}>{t('cv.vacancyTextHint')}</p>
+              <textarea
+                className="textarea"
+                style={{ minHeight: 180 }}
+                aria-label={t('cv.vacancyText')}
+                placeholder={t('cv.vacancyPlaceholder')}
+                value={doc.vacancyText ?? ''}
+                onChange={(e) => patchDoc({ vacancyText: e.target.value })}
+                spellCheck={false}
+              />
+            </div>
+          )}
 
           <div className="row wrap" style={{ marginTop: 14, gap: 12 }}>
             <div>
@@ -390,29 +479,17 @@ export default function CvCheckView({ skills, vacancies, settings, toast }) {
           </div>
 
           {/* ------------------------------------------ контекст из базы */}
-          <div className="panel" style={{ marginTop: 12, padding: 16 }}>
-            <label className="check ink">
-              <input type="checkbox" checked={useContext} onChange={(e) => setUseContext(e.target.checked)} />
-              <span>{t('cv.useContext')}</span>
-            </label>
-            <p className="report-note" style={{ marginTop: 6 }}>
-              {t('cv.useContextHint', { skills: skills.length, vacancies: vacancies.length })}
-            </p>
-            {useContext && vacancies.length > 0 && (
-              <label className="field" style={{ marginTop: 10, marginBottom: 0 }}>
-                <span className="field-label">{t('cv.targetVacancy')}</span>
-                <select className="select" value={vacancyId} onChange={(e) => setVacancyId(e.target.value)}>
-                  <option value="">{t('cv.anyVacancy')}</option>
-                  {vacancies.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.title}
-                      {v.company ? ` — ${v.company}` : ''}
-                    </option>
-                  ))}
-                </select>
+          {isVacancy && (
+            <div className="panel" style={{ marginTop: 12, padding: 16 }}>
+              <label className="check ink">
+                <input type="checkbox" checked={useContext} onChange={(e) => setUseContext(e.target.checked)} />
+                <span>{t('cv.useContext')}</span>
               </label>
-            )}
-          </div>
+              <p className="report-note" style={{ marginTop: 6 }}>
+                {t('cv.useContextHint', { skills: skills.length })}
+              </p>
+            </div>
+          )}
 
           <div className="row wrap" style={{ marginTop: 16 }}>
             {busy ? (
@@ -420,8 +497,12 @@ export default function CvCheckView({ skills, vacancies, settings, toast }) {
                 <Icon name="close" size={13} /> {t('chat.stop')}
               </button>
             ) : (
-              <button className="btn btn-accent" onClick={handleCheck} disabled={reading || chars < MIN_CHARS}>
-                <Icon name="spark" /> {t('cv.check')}
+              <button
+                className="btn btn-accent"
+                onClick={handleCheck}
+                disabled={reading || chars < MIN_CHARS || (isVacancy && vacancyChars < MIN_VACANCY_CHARS)}
+              >
+                <Icon name="spark" /> {isVacancy ? t('cv.compare') : t('cv.check')}
               </button>
             )}
             {(doc.text || result) && !busy && (
@@ -644,7 +725,7 @@ export default function CvCheckView({ skills, vacancies, settings, toast }) {
         </div>
       </div>
 
-      {!skills.length && (
+      {isVacancy && !skills.length && (
         <div style={{ marginTop: 22 }}>
           <Empty title={t('cv.noDataTitle')}>{t('cv.noDataText')}</Empty>
         </div>

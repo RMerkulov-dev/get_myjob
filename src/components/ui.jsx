@@ -51,6 +51,15 @@ export function Icon({ name, size = 15 }) {
         <circle cx="8" cy="4.9" r="0.85" fill="currentColor" stroke="none" />
       </>
     ),
+    caretLeft: <path d="m9.5 4-4 4 4 4" {...stroke} />,
+    caretRight: <path d="m6.5 4 4 4-4 4" {...stroke} />,
+    calendar: (
+      <>
+        <rect x="2.5" y="3.5" width="11" height="10" rx="1" {...stroke} />
+        <path d="M2.5 6.5h11M5.5 2.2v2M10.5 2.2v2" {...stroke} />
+      </>
+    ),
+    link: <path d="M6.6 9.4 9.4 6.6M7 4.6 8.4 3.2a2.6 2.6 0 0 1 3.7 3.7l-1.4 1.4M9 11.4 7.6 12.8a2.6 2.6 0 0 1-3.7-3.7l1.4-1.4" {...stroke} />,
     logout: (
       <>
         <path d="M9.5 3.5H4v9h5.5" {...stroke} />

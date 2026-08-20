@@ -4,7 +4,7 @@ import ThemeToggle from './ThemeToggle'
 import LangToggle from './LangToggle'
 import { Icon } from './ui'
 
-const TABS = ['import', 'skills', 'cv', 'report', 'vacancies', 'chat']
+const TABS = ['import', 'skills', 'cv', 'report', 'vacancies', 'planner', 'chat']
 
 export default function Header({ tab, onTab, counts }) {
   const t = useT()
