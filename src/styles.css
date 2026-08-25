@@ -2798,3 +2798,152 @@ button.cal-cell:focus-visible {
 
   .plan-month { font-size: 22px; }
 }
+
+/* ------------------------------------------------------------ CV Adoption */
+
+/* Карточка правки — тот же язык, что у .finding, но с чекбоксом: пока
+   правка не одобрена, она приглушена, поэтому «что я выбрал» читается
+   по колонке, а не по галочкам. */
+.edit {
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--paper-2);
+  padding: 12px 14px;
+  animation: fade-up 0.32s var(--ease) both;
+  transition: opacity 0.18s var(--ease), border-color 0.18s var(--ease), background 0.18s var(--ease);
+}
+
+.edit[data-severity='high'] { border-left-color: var(--accent); }
+.edit[data-severity='medium'] { border-left-color: var(--amber); }
+.edit[data-severity='low'] { border-left-color: var(--line-strong); }
+
+.edit[data-on='false'] {
+  opacity: 0.62;
+  background: transparent;
+}
+
+.edit[data-on='true'] {
+  border-color: color-mix(in srgb, var(--green) 34%, var(--line));
+  box-shadow: inset 3px 0 0 -1px color-mix(in srgb, var(--green) 45%, transparent);
+}
+
+.edit .check {
+  align-items: flex-start;
+  gap: 9px;
+}
+
+/* Готовая формулировка правится на месте: цифру или формулировку
+   исправить проще здесь, чем потом в Word. */
+.edit-after {
+  min-height: 44px;
+  /* высоту задаёт скрипт по содержимому — своя полоса прокрутки тут лишняя */
+  overflow: hidden;
+  resize: none;
+  padding: 7px 9px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  background: var(--paper-2);
+  border-color: color-mix(in srgb, var(--green) 26%, var(--line));
+}
+
+/* -------------------------------------------------- превью готового резюме
+   Это не «стилизация под документ» ради красоты: превью должно совпадать
+   с .docx один в один, поэтому здесь одна колонка, те же заголовки и те же
+   списки, а не более удобная для экрана вёрстка. */
+.cvdoc {
+  padding: 24px 26px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--paper-2);
+  box-shadow: var(--shadow-soft);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.cvdoc-name {
+  font-family: var(--font-display);
+  font-size: 27px;
+  line-height: 1.1;
+}
+
+.cvdoc-headline {
+  margin-top: 3px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+/* Регистр здесь не декоративный: превью обещает совпадение с .docx
+   один в один, поэтому ни .mono, ни text-transform тут быть не может. */
+.cvdoc-contacts {
+  margin-top: 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+
+.cvdoc-section {
+  margin-top: 18px;
+}
+
+.cvdoc-h {
+  margin: 0 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.cvdoc-entry {
+  margin-top: 10px;
+}
+
+.cvdoc-entry strong {
+  font-weight: 600;
+}
+
+.cvdoc-period {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.cvdoc-meta {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--ink-3);
+}
+
+.cvdoc-bullet {
+  position: relative;
+  margin-top: 4px;
+  padding-left: 15px;
+}
+
+.cvdoc-bullet::before {
+  content: '•';
+  position: absolute;
+  left: 3px;
+  color: var(--ink-3);
+}
+
+.cvdoc-para {
+  margin: 6px 0 0;
+}
+
+.cvdoc-inline {
+  margin: 5px 0 0;
+}
+
+.cvdoc-inline strong {
+  font-weight: 600;
+}

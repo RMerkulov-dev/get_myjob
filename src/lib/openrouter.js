@@ -666,3 +666,307 @@ export async function reviewDocument(
       })),
   }
 }
+
+/* ========================================================= CV Adoption
+ *
+ * Подгонка резюме под одну конкретную вакансию — два запроса, между
+ * которыми стоит человек.
+ *
+ *   1. proposeCvEdits — модель предлагает правки списком: что заменить,
+ *      что добавить, что убрать, и на какую цитату из резюме она при этом
+ *      опирается. Ничего не переписывается.
+ *   2. tailorCv — применяются ТОЛЬКО одобренные правки, и на выходе не
+ *      текст, а структура документа: из неё собирается и .docx, и превью,
+ *      и markdown.
+ *
+ * Почему два запроса, а не один: правки нужно апрувить по одной, а модель,
+ * которая сразу отдаёт готовое резюме, не оставляет места для «эту беру,
+ * эту нет». Плюс дешевле: второй запрос идёт только когда выбор сделан.
+ *
+ * Главное здесь — не качество формулировок, а то, чтобы в резюме не
+ * появилось технологий, которых человек не знает. Поэтому у каждой правки
+ * есть evidence — дословная цитата из резюме, которой она подтверждается,
+ * а термины вакансии, которые подтвердить нечем, уходят в отдельный
+ * список «не вписывать» вместе с причиной.
+ * ================================================================== */
+
+const ADOPT_LANG_NAMES = { en: 'English', uk: 'Ukrainian', ru: 'Russian' }
+
+/** Общая для двух запросов часть: запрет придумывать факты. */
+const HONESTY_RULES = `THE HARD RULE — never invent experience:
+1. Wording may change; facts may not. Never introduce a technology, tool, methodology, certification, domain, employer, job title, date or number that the CV does not already contain.
+2. A term from the vacancy may appear in the CV only as a more standard name for something the CV already describes, and only when an exact quote from the CV proves it. "Led two-week iterations with a backlog and retrospectives" may become "Scrum"; nothing in the CV about testing may become "QA automation".
+3. Missing numbers stay bracketed placeholders — [N], [X%], [team size]. Never guess a figure, never round one up.
+4. Requirements the CV cannot back stay uncovered. Leaving a gap visible is correct behaviour; filling it with a plausible sentence is not.
+5. If a summary of the person's own skill levels is provided, it is a second source of truth about them, weaker than the CV: a skill they rated 3-5 or marked as learned may be named even when the CV does not spell it out, and a skill they rated 0-1 may NEVER be named, whatever the vacancy asks for.`
+
+const EDIT_KINDS = ['rewrite', 'add', 'keyword', 'reorder', 'remove', 'ask']
+
+function proposeSystem({ lang, notes }) {
+  const language = ADOPT_LANG_NAMES[lang] ?? 'English'
+
+  return `You are a senior technical recruiter and CV editor who tailors CVs of Project Managers and Business Analysts to one specific vacancy.
+
+You do NOT write the new CV. You propose a list of concrete edits, each one independently approvable: the user ticks the ones they accept, and only those get applied afterwards. Assume every edit may be approved alone, so none of them may depend on another.
+
+${HONESTY_RULES}
+
+EDIT KINDS:
+- "rewrite" — replace an exact quote from the CV with better wording for this vacancy. "before" is the quote, "after" is the final replacement text.
+- "add" — one new line for a named section (a bullet, a skills line, a summary sentence). "before" is null.
+- "keyword" — surface the term this vacancy uses for something the CV already proves. "after" contains the line with the term in place; "why" says which CV fact it renames.
+- "reorder" — move a section, a role or a bullet higher because this vacancy cares about it most. "after" is null.
+- "remove" — cut what this vacancy does not care about, to free space on page one. "after" is null.
+- "ask" — a must-have of the vacancy that the CV may cover but does not state. Ask the user for the missing fact in "why"; "after" is null. Never turn an "ask" into an invented sentence.
+
+RULES:
+1. "evidence" is what proves this edit adds no new facts: either an exact quote from the CV, copied character for character, or — only when the claim rests on the person's own skill database — the literal form "SKILLS DB: <term>". It is required for "rewrite", "add" and "keyword"; "rewrite" always needs the quote. Use null only for "remove", "reorder" and "ask". Nothing to point at means the edit must be an "ask".
+2. "before" must be an EXACT quote from the CV, up to 240 characters, or null.
+3. First decide what language the CV itself is written in and put its code in "cv_language". Every "after" is the final wording that will stand in the CV — not instructions, not a comment — and it MUST be written in that language, even though the rest of this answer is in ${language}. An English CV is edited in English. Preserve every fact from "before"; where a fact is missing, leave a bracketed placeholder.
+4. "section" is the CV section this edit belongs to, named the way the CV itself names it.
+5. "severity": "high" — this decides the screening for this vacancy; "medium" — noticeably better; "low" — polish.
+6. Between 8 and 16 edits, ordered by impact, "high" first. No general CV advice that would fit any vacancy: every edit must be about this ad.
+7. "needs_input" is true when "after" still contains a placeholder the user has to fill in.
+8. "keywords_to_use" — terms from the ad that the CV can honestly claim and that the edits put into it. "keywords_to_avoid" — terms from the ad that the CV cannot back, each with a one-line reason; these must never appear in any "after".
+9. "fit" is 0-100: how well this CV matches this vacancy BEFORE the edits, judged on the must-haves of the ad against what the CV actually proves.
+10. Analysis fields (title, why, summary, section, reasons) in ${language}. Quotes in "before" and "evidence" stay in the original language of the CV.
+11. Be economical: no preamble, no repetition, nothing outside the schema.${
+    notes ? `\n\nThe user also asked you to take this into account: """${notes.slice(0, 600)}"""` : ''
+  }
+
+Reply with ONLY valid JSON, no markdown wrapper:
+{
+  "cv_language": "language code of the CV itself: en | uk | ru | other",
+  "vacancy": { "title": "position from the ad", "company": "company or null", "seniority": "junior | middle | senior | lead | null" },
+  "fit": 0,
+  "summary": "2-3 sentences in ${language}: what makes this CV fit this vacancy and what the edits are about",
+  "keywords_to_use": ["term from the ad, in its own wording"],
+  "keywords_to_avoid": [{ "term": "term from the ad", "why": "one line in ${language}: what the CV lacks for it" }],
+  "edits": [
+    {
+      "kind": "${EDIT_KINDS.join(' | ')}",
+      "section": "CV section, in ${language}",
+      "severity": "high | medium | low",
+      "title": "what this edit does, up to 70 characters, in ${language}",
+      "why": "why it matters for THIS vacancy, one or two sentences in ${language}",
+      "evidence": "exact quote from the CV, or \"SKILLS DB: <term>\", or null",
+      "before": "exact quote from the CV to replace, or null",
+      "after": "final wording in the CV's own language, or null",
+      "needs_input": false
+    }
+  ]
+}`
+}
+
+/**
+ * Первый шаг: список правок под вакансию. Ничего не переписывает —
+ * ответ показывается человеку с чекбоксами.
+ */
+export async function proposeCvEdits(
+  { apiKey, model, cvText, vacancyText, lang = 'ru', context = '', notes = '', signal },
+  onProgress,
+) {
+  const contextBlock = context ? `\n\nTHE PERSON'S OWN SKILL DATABASE (internal data, never quote its notation):\n${context}` : ''
+
+  const raw = await streamComplete(
+    {
+      apiKey,
+      model,
+      json: true,
+      temperature: 0.25,
+      // как и в разборе документов: reasoning тратит тот же лимит
+      maxTokens: 16000,
+      signal,
+      messages: [
+        { role: 'system', content: proposeSystem({ lang, notes }) },
+        {
+          role: 'user',
+          content: `MY CV (verbatim):\n"""\n${cvText.slice(0, 24000)}\n"""\n\nTHE VACANCY I AM APPLYING FOR (verbatim job ad):\n"""\n${vacancyText.slice(0, 12000)}\n"""${contextBlock}`,
+        },
+      ],
+    },
+    (delta) => onProgress?.(delta),
+  )
+
+  const parsed = extractJson(raw)
+  const clamp = (value) => {
+    const n = Number(value)
+    return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null
+  }
+
+  return {
+    cvLanguage: typeof parsed.cv_language === 'string' ? parsed.cv_language.trim().slice(0, 12) : '',
+    vacancy: {
+      title: typeof parsed.vacancy?.title === 'string' ? parsed.vacancy.title.trim() : '',
+      company: typeof parsed.vacancy?.company === 'string' ? parsed.vacancy.company.trim() : '',
+      seniority: typeof parsed.vacancy?.seniority === 'string' ? parsed.vacancy.seniority.trim() : '',
+    },
+    fit: clamp(parsed.fit),
+    summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
+    keywordsToUse: asLines(parsed.keywords_to_use, 16),
+    keywordsToAvoid: (Array.isArray(parsed.keywords_to_avoid) ? parsed.keywords_to_avoid : [])
+      .filter((k) => k && typeof k.term === 'string' && k.term.trim())
+      .slice(0, 12)
+      .map((k) => ({ term: k.term.trim(), why: typeof k.why === 'string' ? k.why.trim() : '' })),
+    // id присваиваем сами: по нему живут галочки и правки пользователя,
+    // и полагаться тут на нумерацию от модели незачем
+    edits: (Array.isArray(parsed.edits) ? parsed.edits : [])
+      .filter((e) => e && (typeof e.title === 'string' || typeof e.after === 'string'))
+      .slice(0, 18)
+      .map((e, i) => ({
+        id: `e${i + 1}`,
+        num: i + 1,
+        kind: EDIT_KINDS.includes(e.kind) ? e.kind : 'rewrite',
+        section: typeof e.section === 'string' ? e.section.trim() : '',
+        severity: SEVERITIES.includes(e.severity) ? e.severity : 'medium',
+        title: typeof e.title === 'string' ? e.title.trim() : '',
+        why: typeof e.why === 'string' ? e.why.trim() : '',
+        evidence: typeof e.evidence === 'string' && e.evidence.trim() ? e.evidence.trim() : null,
+        before: typeof e.before === 'string' && e.before.trim() ? e.before.trim() : null,
+        after: typeof e.after === 'string' && e.after.trim() ? e.after.trim() : null,
+        needsInput: e.needs_input === true || /\[[^\]]{1,30}\]/.test(String(e.after ?? '')),
+      })),
+  }
+}
+
+const BLOCK_TYPES = ['para', 'bullet', 'entry', 'inline']
+
+function tailorSystem({ lang, cvLanguage }) {
+  const language = ADOPT_LANG_NAMES[lang] ?? 'English'
+  // язык резюме определён на первом шаге: без прямого указания модель
+  // переписывает англоязычное резюме на языке анализа
+  const docLanguage = ADOPT_LANG_NAMES[cvLanguage] ?? cvLanguage
+
+  return `You are a CV editor for Project Manager and Business Analyst roles. You produce the FINAL tailored CV as structured JSON, ready to be written into a .docx file.
+
+You are given the original CV, the job ad, and the list of edits the user has APPROVED. Apply exactly those edits — all of them, and nothing else. Edits that were not given to you were rejected by the user: do not apply them, do not invent replacements for them.
+
+${HONESTY_RULES}
+
+RULES:
+1. Everything the original CV says stays, unless an approved edit changes or removes it. Do not silently drop roles, employers, dates, education, certifications, languages or contacts. This is a re-tailored CV, not a shorter one.
+2. ${
+    docLanguage
+      ? `The CV is written in ${docLanguage}. Every string that goes into the document — headline, headings, bullets, contacts — must be in ${docLanguage}`
+      : 'Keep the language of the original CV'
+  }. Do not translate the document, and do not mix languages inside it, even though these instructions and the "notes" field are in ${language}. If an approved edit arrives in another language, translate it into the language of the document before applying it.
+3. An approved edit with an unresolved placeholder is applied WITH the placeholder visible ([N], [X%]) — the user fills it in. List every placeholder you leave in "placeholders".
+4. An approved edit whose evidence reads "SKILLS DB: …" rests on the person's own self-assessment rather than on the CV text, and they have approved it themselves — apply it like any other. An approved edit of kind "ask" adds nothing to the document; repeat what it asks for in "notes" instead.
+5. Section order follows this vacancy: what it cares about most goes first, after the summary. Standard, machine-readable headings in the CV's own language (Summary, Experience, Skills, Education, Certifications, Languages) — keep the CV's own heading when it is already standard.
+6. Bullets: one thought each, up to two lines, start with a past-tense verb, numbers where the CV has them. No pronouns, no passive voice, no duties phrased as "responsible for".
+7. Blocks:
+   - "entry" — a job or education line: "text" is the role and employer, "right" is the period exactly as the CV writes it, "meta" is the one-line context (domain, team size, methodology). Every job keeps its bullets below it.
+   - "bullet" — a bullet point.
+   - "para" — a plain paragraph, used for the summary.
+   - "inline" — a labelled line, e.g. "label": "Tools", "text": "Jira, Confluence, BPMN".
+8. "contacts" — every contact from the original CV, unchanged: email, phone, city and work format, LinkedIn. Never invent or complete one.
+9. Keep it to the length of a 1-2 page CV: the experience this vacancy cares about in detail, older roles compressed to a line or two.
+10. "notes" — up to 5 short lines in ${language}: what to check before sending. Nothing else outside the schema.
+
+Reply with ONLY valid JSON, no markdown wrapper:
+{
+  "language": "language code of the CV itself",
+  "name": "the person's name exactly as in the CV",
+  "headline": "target job title for this vacancy, in the CV's language, backed by real experience",
+  "contacts": ["email", "phone", "city / work format", "LinkedIn"],
+  "sections": [
+    {
+      "heading": "section heading in the CV's language",
+      "blocks": [
+        { "type": "${BLOCK_TYPES.join(' | ')}", "text": "…", "right": "period, entry only", "meta": "context line, entry only", "label": "label, inline only" }
+      ]
+    }
+  ],
+  "applied": [1, 2],
+  "skipped": [{ "num": 3, "why": "one line in ${language}: why this approved edit could not be applied" }],
+  "placeholders": ["[N] in Experience → what to fill in, in ${language}"],
+  "notes": ["one line in ${language}"]
+}`
+}
+
+/** Одобренные правки — списком с номерами: по ним модель отчитывается, что применила. */
+function editsBlock(edits) {
+  return edits
+    .map((e, i) => {
+      const lines = [`EDIT ${i + 1} — kind: ${e.kind}; section: ${e.section || '—'}; ${e.title}`]
+      if (e.why) lines.push(`  why: ${e.why}`)
+      if (e.before) lines.push(`  replace this exact text: """${e.before}"""`)
+      if (e.after) lines.push(`  with this final wording: """${e.after}"""`)
+      if (!e.after && e.kind === 'remove') lines.push('  action: remove it from the CV')
+      if (!e.after && e.kind === 'reorder') lines.push('  action: move it higher, keep the text as it is')
+      if (e.evidence) lines.push(`  backed by this quote from the CV: """${e.evidence}"""`)
+      return lines.join('\n')
+    })
+    .join('\n\n')
+}
+
+/**
+ * Второй шаг: собрать резюме из одобренных правок.
+ *
+ * Возвращает структуру документа, а не текст: из неё docxWrite.js делает
+ * .docx, компонент — превью, а cvToMarkdown — версию для редактора.
+ */
+export async function tailorCv(
+  { apiKey, model, cvText, vacancyText, edits, lang = 'ru', cvLanguage = '', context = '', signal },
+  onProgress,
+) {
+  const contextBlock = context ? `\n\nTHE PERSON'S OWN SKILL DATABASE (internal data, never quote its notation):\n${context}` : ''
+
+  const raw = await streamComplete(
+    {
+      apiKey,
+      model,
+      json: true,
+      temperature: 0.2,
+      maxTokens: 20000,
+      signal,
+      messages: [
+        { role: 'system', content: tailorSystem({ lang, cvLanguage }) },
+        {
+          role: 'user',
+          content: `ORIGINAL CV (verbatim):\n"""\n${cvText.slice(0, 24000)}\n"""\n\nTHE VACANCY (verbatim job ad):\n"""\n${vacancyText.slice(0, 12000)}\n"""\n\nEDITS THE USER APPROVED (apply exactly these):\n${editsBlock(edits)}${contextBlock}`,
+        },
+      ],
+    },
+    (delta) => onProgress?.(delta),
+  )
+
+  const parsed = extractJson(raw)
+  const str = (value, limit = 400) => (typeof value === 'string' ? value.trim().slice(0, limit) : '')
+
+  const sections = (Array.isArray(parsed.sections) ? parsed.sections : [])
+    .slice(0, 14)
+    .map((section) => ({
+      heading: str(section?.heading, 90),
+      blocks: (Array.isArray(section?.blocks) ? section.blocks : [])
+        .slice(0, 60)
+        .map((block) => ({
+          type: BLOCK_TYPES.includes(block?.type) ? block.type : 'para',
+          text: str(block?.text, 1200),
+          right: str(block?.right, 90),
+          meta: str(block?.meta, 260),
+          label: str(block?.label, 60),
+        }))
+        .filter((block) => block.text || block.label),
+    }))
+    .filter((section) => section.heading || section.blocks.length)
+
+  return {
+    doc: {
+      language: str(parsed.language, 12),
+      name: str(parsed.name, 120),
+      headline: str(parsed.headline, 160),
+      contacts: asLines(parsed.contacts, 8),
+      sections,
+    },
+    applied: (Array.isArray(parsed.applied) ? parsed.applied : [])
+      .map((n) => Number(n))
+      .filter((n) => Number.isInteger(n) && n >= 1 && n <= edits.length),
+    skipped: (Array.isArray(parsed.skipped) ? parsed.skipped : [])
+      .filter((s) => s && Number.isInteger(Number(s.num)))
+      .slice(0, 12)
+      .map((s) => ({ num: Number(s.num), why: str(s.why, 240) })),
+    placeholders: asLines(parsed.placeholders, 10),
+    notes: asLines(parsed.notes, 6),
+  }
+}
